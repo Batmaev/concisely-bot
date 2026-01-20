@@ -80,22 +80,15 @@ async def get_last_summary_message_id(chat_id: int) -> int | None:
 async def set_last_summary_message_id(chat_id: int, message_id: int):
     """Устанавливает ID последнего саммаризованного сообщения для чата."""
     async with get_db() as db:
-        # Сначала пробуем UPDATE, если записи нет - CREATE
-        result = await db.query(
-            "UPDATE chat_state SET last_summary_message_id = $message_id WHERE chat_id = $chat_id",
+        await db.query(
+            "UPSERT chat_state SET chat_id = $chat_id, last_summary_message_id = $message_id WHERE chat_id = $chat_id",
             {"chat_id": chat_id, "message_id": message_id}
         )
-        # Если UPDATE ничего не обновил, создаём новую запись
-        if not _normalize_query_result(result):
-            await db.query(
-                "CREATE chat_state SET chat_id = $chat_id, last_summary_message_id = $message_id",
-                {"chat_id": chat_id, "message_id": message_id}
-            )
 
 
 async def save_message(chat_id: int, message_id: int, sender_id: int | None, 
                        sender_name: str, text: str, reply_to_message_id: int | None, 
-                       timestamp: str | None):
+                       timestamp: str | None, raw: dict):
     """Сохраняет сообщение в БД."""
     msg_data = {
         "message_id": message_id,
@@ -105,6 +98,7 @@ async def save_message(chat_id: int, message_id: int, sender_id: int | None,
         "text": text,
         "reply_to_message_id": reply_to_message_id,
         "timestamp": timestamp,
+        "raw": raw,
     }
     
     # ID записи включает chat_id для уникальности между чатами

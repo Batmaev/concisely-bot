@@ -122,16 +122,14 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> dict:
 async def handle_message(message: Message):
     """Обрабатывает все сообщения из отслеживаемых чатов."""
     start_time = time.perf_counter()
+    
     message_text = get_message_text(message)
+    sender_name = get_sender_name(message)
+    raw_message = message.model_dump(mode="json", exclude_none=True)
+    
     context: dict = {
         "request_id": f"{message.chat.id}:{message.message_id}",
-        "chat_id": message.chat.id,
-        "message_id": message.message_id,
-        "sender_id": message.from_user.id if message.from_user else None,
-        "sender_name": get_sender_name(message),
-        "message_text": message_text,
-        "reply_to_message_id": message.reply_to_message.message_id if message.reply_to_message else None,
-        "timestamp": message.date.isoformat() if message.date else None,
+        "message": raw_message,
         "timings_ms": {},
     }
     try:
@@ -140,10 +138,11 @@ async def handle_message(message: Message):
             chat_id=message.chat.id,
             message_id=message.message_id,
             sender_id=message.from_user.id if message.from_user else None,
-            sender_name=context["sender_name"],
+            sender_name=sender_name,
             text=message_text,
             reply_to_message_id=message.reply_to_message.message_id if message.reply_to_message else None,
             timestamp=message.date.isoformat() if message.date else None,
+            raw=raw_message,
         )
         context["timings_ms"]["save_message"] = round((time.perf_counter() - save_start) * 1000, 2)
         
