@@ -1,0 +1,7 @@
+.venv
+.vscode
+data
+logs
+test
+.env
+.DS_Store

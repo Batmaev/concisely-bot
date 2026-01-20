@@ -1,0 +1,19 @@
+[project]
+name = "concisely-bot"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "aiogram>=3.24.0",
+    "beautifulsoup4>=4.14.3",
+    "openai>=2.15.0",
+    "python-dotenv>=1.2.1",
+    "surrealdb>=1.0.8",
+]
+
+[dependency-groups]
+dev = [
+    "httpcore[socks]>=1.0.9",
+    "httpx[socks]>=0.28.1",
+    "ipykernel>=7.1.0",
+    "socksio>=1.0.0",
+]
