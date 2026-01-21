@@ -3,7 +3,7 @@ import logging
 
 from aiogram import Dispatcher
 
-from .db import init_db
+from .db import db, init_db
 from .handlers import bot, router
 
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +19,10 @@ async def main():
     dp = Dispatcher()
     dp.include_router(router)
     
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        await db.close()
 
 
 if __name__ == "__main__":
