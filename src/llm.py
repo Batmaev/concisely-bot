@@ -29,7 +29,7 @@ def _get_forward_sender_name(raw: dict) -> str | None:
     return None
 
 
-def _format_attachment_block(attachment: dict | None, photo_description: str | None) -> str | None:
+def _format_attachment_block(attachment: dict | None, photo_description: str | None, sticker_description: str | None = None) -> str | None:
     """Форматирует блок вложения для промпта."""
     if not attachment:
         return None
@@ -56,6 +56,9 @@ def _format_attachment_block(attachment: dict | None, photo_description: str | N
         return "<gif />"
     
     if att_type == "sticker":
+        if sticker_description:
+            indented_desc = "\n".join(f"  {line}" for line in sticker_description.split("\n"))
+            return f"<sticker>\n{indented_desc}\n</sticker>"
         emoji = attachment.get("emoji", "")
         if emoji:
             return f"<sticker>{emoji}</sticker>"
@@ -92,6 +95,7 @@ def format_message_for_prompt(msg_data: dict) -> str:
     raw = msg_data.get("raw", {})
     attachment = msg_data.get("attachment")
     photo_description = msg_data.get("photo_description")
+    sticker_description = msg_data.get("sticker_description")
     
     # Проверяем, есть ли информация о форварде
     forward_name = _get_forward_sender_name(raw) if raw else None
@@ -109,7 +113,7 @@ def format_message_for_prompt(msg_data: dict) -> str:
     parts = [f"### {msg_id} {name}{labels_str}"]
     
     # Блок вложения
-    attachment_block = _format_attachment_block(attachment, photo_description)
+    attachment_block = _format_attachment_block(attachment, photo_description, sticker_description)
     if attachment_block:
         parts.append(attachment_block)
     
@@ -154,6 +158,21 @@ async def describe_image(base64_image: str) -> str:
             'role': 'user',
             'content': [
                 {'type': 'input_text', 'text': 'Что изображено на картинке? Кратко'},
+                {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'}
+            ]
+        }]
+    )
+    return response.output_text
+
+
+async def describe_sticker(base64_image: str) -> str:
+    """Описывает стикер с помощью vision-модели."""
+    response = await openai_client.responses.create(
+        model=IMAGE_MODEL,
+        input=[{
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': 'Очень кратко опиши стикер. Если стикер представляет собой скриншот сообщения, ответь в формате "Имя:\\nтекст сообщения"'},
                 {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'}
             ]
         }]

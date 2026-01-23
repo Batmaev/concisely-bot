@@ -34,7 +34,15 @@ def get_attachment_info(message: Message) -> dict | None:
     if message.video_note:
         return {"type": "video_note"}
     if message.sticker:
-        return {"type": "sticker", "emoji": message.sticker.emoji or ""}
+        return {
+            "type": "sticker",
+            "emoji": message.sticker.emoji or "",
+            "file_id": message.sticker.file_id,
+            "file_unique_id": message.sticker.file_unique_id,
+            "is_animated": message.sticker.is_animated,
+            "is_video": message.sticker.is_video,
+            "thumbnail_file_id": message.sticker.thumbnail.file_id if message.sticker.thumbnail else None,
+        }
     if message.video:
         return {"type": "video"}
     if message.animation:

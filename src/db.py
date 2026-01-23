@@ -78,6 +78,8 @@ async def init_db():
     await db.query("DEFINE INDEX IF NOT EXISTS chat_message_idx ON TABLE message COLUMNS chat_id, message_id UNIQUE;")
     await db.query("DEFINE TABLE IF NOT EXISTS chat_state SCHEMALESS;")
     await db.query("DEFINE INDEX IF NOT EXISTS chat_state_idx ON TABLE chat_state COLUMNS chat_id UNIQUE;")
+    await db.query("DEFINE TABLE IF NOT EXISTS sticker_cache SCHEMALESS;")
+    await db.query("DEFINE INDEX IF NOT EXISTS sticker_cache_idx ON TABLE sticker_cache COLUMNS file_unique_id UNIQUE;")
     logger.info("База данных инициализирована")
 
 
@@ -103,7 +105,7 @@ async def set_last_summary_message_id(chat_id: int, message_id: int):
 async def save_message(chat_id: int, message_id: int, sender_id: int | None, 
                        sender_name: str, text: str, reply_to_message_id: int | None, 
                        timestamp: str | None, raw: dict, attachment: dict | None = None,
-                       photo_description: str | None = None):
+                       photo_description: str | None = None, sticker_description: str | None = None):
     """Сохраняет сообщение в БД."""
     record_id = f"message:{chat_id}_{message_id}"
     data = {
@@ -120,6 +122,8 @@ async def save_message(chat_id: int, message_id: int, sender_id: int | None,
         data["attachment"] = attachment
     if photo_description:
         data["photo_description"] = photo_description
+    if sticker_description:
+        data["sticker_description"] = sticker_description
     await db.create(record_id, data)
 
 
@@ -133,3 +137,23 @@ async def get_messages_for_summary(chat_id: int, from_id: int, to_id: int) -> li
         """,
         {"chat_id": chat_id, "from_id": from_id, "to_id": to_id}
     )
+
+
+async def get_sticker_description(file_unique_id: str) -> str | None:
+    """Получает описание стикера из кэша."""
+    rows = await db.fetch(
+        "SELECT description FROM sticker_cache WHERE file_unique_id = $file_unique_id LIMIT 1",
+        {"file_unique_id": file_unique_id}
+    )
+    if rows and "description" in rows[0]:
+        return rows[0]["description"]
+    return None
+
+
+async def save_sticker_description(file_unique_id: str, description: str):
+    """Сохраняет описание стикера в кэш."""
+    record_id = f"sticker_cache:{file_unique_id}"
+    await db.create(record_id, {
+        "file_unique_id": file_unique_id,
+        "description": description,
+    })

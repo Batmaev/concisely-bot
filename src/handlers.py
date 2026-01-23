@@ -12,10 +12,12 @@ from .config import BOT_TOKEN, CHAT_IDS, SUMMARY_INTERVAL, SUMMARY_INTERVALS, WI
 from .db import (
     get_last_summary_message_id,
     get_messages_for_summary,
+    get_sticker_description,
     save_message,
+    save_sticker_description,
     set_last_summary_message_id,
 )
-from .llm import describe_image, generate_summary, get_model_short_name
+from .llm import describe_image, describe_sticker, generate_summary, get_model_short_name
 from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name
 
 logger = logging.getLogger(__name__)
@@ -146,6 +148,49 @@ async def get_photo_description(message: Message) -> str | None:
         return None
 
 
+async def get_sticker_desc(message: Message) -> str | None:
+    """Получает описание стикера (из кэша или от vision-модели)."""
+    if not message.sticker:
+        return None
+    
+    sticker = message.sticker
+    file_unique_id = sticker.file_unique_id
+    
+    # Сначала проверяем кэш
+    cached = await get_sticker_description(file_unique_id)
+    if cached is not None:
+        return cached
+    
+    try:
+        # Для анимированных/видео стикеров используем thumbnail
+        if sticker.is_animated or sticker.is_video:
+            if not sticker.thumbnail:
+                logger.warning(f"У анимированного стикера {file_unique_id} нет thumbnail")
+                return None
+            file = await bot.get_file(sticker.thumbnail.file_id)
+        else:
+            file = await bot.get_file(sticker.file_id)
+        
+        # Скачиваем в RAM
+        buffer = io.BytesIO()
+        await bot.download_file(file.file_path, buffer)
+        buffer.seek(0)
+        
+        # Конвертируем в base64
+        base64_image = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        # Получаем описание
+        description = await describe_sticker(base64_image)
+        
+        # Сохраняем в кэш
+        await save_sticker_description(file_unique_id, description)
+        
+        return description
+    except Exception as e:
+        logger.warning(f"Не удалось получить описание стикера: {e}")
+        return None
+
+
 @router.message(F.chat.id.in_(CHAT_IDS))
 async def handle_message(message: Message):
     """Обрабатывает все сообщения из отслеживаемых чатов."""
@@ -171,6 +216,15 @@ async def handle_message(message: Message):
             if photo_description:
                 context["photo_description"] = photo_description
         
+        # Получаем описание стикера, если есть
+        sticker_description = None
+        if message.sticker:
+            sticker_start = time.perf_counter()
+            sticker_description = await get_sticker_desc(message)
+            context["timings_ms"]["sticker_description"] = round((time.perf_counter() - sticker_start) * 1000, 2)
+            if sticker_description:
+                context["sticker_description"] = sticker_description
+        
         save_start = time.perf_counter()
         await save_message(
             chat_id=message.chat.id,
@@ -183,6 +237,7 @@ async def handle_message(message: Message):
             raw=raw_message,
             attachment=attachment,
             photo_description=photo_description,
+            sticker_description=sticker_description,
         )
         context["timings_ms"]["save_message"] = round((time.perf_counter() - save_start) * 1000, 2)
         
