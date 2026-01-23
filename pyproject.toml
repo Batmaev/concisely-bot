@@ -15,5 +15,6 @@ dev = [
     "httpcore[socks]>=1.0.9",
     "httpx[socks]>=0.28.1",
     "ipykernel>=7.1.0",
+    "pillow>=12.1.0",
     "socksio>=1.0.0",
 ]

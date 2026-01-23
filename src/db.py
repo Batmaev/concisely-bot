@@ -102,10 +102,11 @@ async def set_last_summary_message_id(chat_id: int, message_id: int):
 
 async def save_message(chat_id: int, message_id: int, sender_id: int | None, 
                        sender_name: str, text: str, reply_to_message_id: int | None, 
-                       timestamp: str | None, raw: dict):
+                       timestamp: str | None, raw: dict, attachment: dict | None = None,
+                       photo_description: str | None = None):
     """Сохраняет сообщение в БД."""
     record_id = f"message:{chat_id}_{message_id}"
-    await db.create(record_id, {
+    data = {
         "message_id": message_id,
         "chat_id": chat_id,
         "sender_id": sender_id,
@@ -114,7 +115,12 @@ async def save_message(chat_id: int, message_id: int, sender_id: int | None,
         "reply_to_message_id": reply_to_message_id,
         "timestamp": timestamp,
         "raw": raw,
-    })
+    }
+    if attachment:
+        data["attachment"] = attachment
+    if photo_description:
+        data["photo_description"] = photo_description
+    await db.create(record_id, data)
 
 
 async def get_messages_for_summary(chat_id: int, from_id: int, to_id: int) -> list[dict]:

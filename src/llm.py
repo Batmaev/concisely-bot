@@ -2,7 +2,7 @@ import random
 
 from openai import AsyncOpenAI
 
-from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT
+from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT, IMAGE_MODEL
 
 openai_client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
@@ -29,13 +29,69 @@ def _get_forward_sender_name(raw: dict) -> str | None:
     return None
 
 
+def _format_attachment_block(attachment: dict | None, photo_description: str | None) -> str | None:
+    """Форматирует блок вложения для промпта."""
+    if not attachment:
+        return None
+    
+    att_type = attachment.get("type")
+    
+    if att_type == "photo":
+        if photo_description:
+            # Каждая строка описания с отступом в 2 пробела
+            indented_desc = "\n".join(f"  {line}" for line in photo_description.split("\n"))
+            return f"<photo>\n{indented_desc}\n</photo>"
+        return "<photo />"
+    
+    if att_type == "voice":
+        return "<voice />"
+    
+    if att_type == "video_note":
+        return "<video_note />"
+    
+    if att_type == "video":
+        return "<video />"
+    
+    if att_type == "animation":
+        return "<gif />"
+    
+    if att_type == "sticker":
+        emoji = attachment.get("emoji", "")
+        if emoji:
+            return f"<sticker>{emoji}</sticker>"
+        return "<sticker />"
+    
+    if att_type == "document":
+        file_name = attachment.get("file_name", "файл")
+        return f"<document>{file_name}</document>"
+    
+    if att_type == "poll":
+        question = attachment.get("question", "")
+        options = attachment.get("options", [])
+        if options:
+            options_str = "\n".join(f"  - {opt}" for opt in options)
+            return f"<poll>{question}\n{options_str}\n</poll>"
+        return f"<poll>{question}</poll>"
+    
+    if att_type == "location":
+        return "<location />"
+    
+    if att_type == "new_members":
+        names = attachment.get("names", "")
+        return f"<new_members>{names}</new_members>"
+    
+    return None
+
+
 def format_message_for_prompt(msg_data: dict) -> str:
     """Форматирует сообщение для промпта."""
     msg_id = msg_data["message_id"]
     name = msg_data["sender_name"]
-    text = msg_data["text"]
+    text = msg_data.get("text", "")
     reply_to = msg_data.get("reply_to_message_id")
     raw = msg_data.get("raw", {})
+    attachment = msg_data.get("attachment")
+    photo_description = msg_data.get("photo_description")
     
     # Проверяем, есть ли информация о форварде
     forward_name = _get_forward_sender_name(raw) if raw else None
@@ -49,10 +105,20 @@ def format_message_for_prompt(msg_data: dict) -> str:
     
     labels_str = f" [{', '.join(labels)}]" if labels else ""
     
-    # Добавляем отступ в 2 пробела к каждой строке текста
-    indented_text = "\n".join(f"  {line}" for line in text.split("\n"))
+    # Собираем части сообщения
+    parts = [f"### {msg_id} {name}{labels_str}"]
     
-    return f"### {msg_id} {name}{labels_str}\n{indented_text}"
+    # Блок вложения
+    attachment_block = _format_attachment_block(attachment, photo_description)
+    if attachment_block:
+        parts.append(attachment_block)
+    
+    # Текст/caption с отступом
+    if text:
+        indented_text = "\n".join(f"  {line}" for line in text.split("\n"))
+        parts.append(indented_text)
+    
+    return "\n".join(parts)
 
 
 def generate_full_prompt(messages: list[dict]) -> str:
@@ -78,3 +144,18 @@ def get_model_short_name(model: str) -> str:
     """Извлекает короткое имя модели."""
     # 'anthropic/claude-opus-4.5' -> 'claude-opus-4.5'
     return model.split('/')[-1]
+
+
+async def describe_image(base64_image: str) -> str:
+    """Описывает изображение с помощью vision-модели."""
+    response = await openai_client.responses.create(
+        model=IMAGE_MODEL,
+        input=[{
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': 'Что изображено на картинке? Кратко'},
+                {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'}
+            ]
+        }]
+    )
+    return response.output_text

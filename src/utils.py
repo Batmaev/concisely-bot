@@ -7,33 +7,49 @@ from bs4 import BeautifulSoup
 
 
 def get_message_text(message: Message) -> str:
-    """Извлекает текст из сообщения с учетом разных типов."""
+    """Извлекает текст/caption из сообщения."""
     if message.text:
         return message.text
     if message.caption:
         return message.caption
-    if message.sticker:
-        emoji = message.sticker.emoji or ""
-        return f"Sticker [{emoji}]"
+    return ""
+
+
+def get_attachment_info(message: Message) -> dict | None:
+    """Возвращает информацию о вложении сообщения.
+    
+    Returns:
+        dict с ключами:
+            - type: тип вложения (photo, voice, video_note, sticker, video, document, animation, poll, location)
+            - emoji: эмодзи стикера (только для sticker)
+            - file_name: имя файла (только для document)
+            - question: вопрос опроса (только для poll)
+            - options: варианты ответа (только для poll)
+        или None если вложения нет
+    """
     if message.photo:
-        return "[Фото]"
-    if message.video:
-        return "[Видео]"
+        return {"type": "photo"}
     if message.voice:
-        return "[Голосовое сообщение]"
+        return {"type": "voice"}
     if message.video_note:
-        return "[Видеосообщение]"
-    if message.document:
-        return f"[Документ: {message.document.file_name or 'файл'}]"
+        return {"type": "video_note"}
+    if message.sticker:
+        return {"type": "sticker", "emoji": message.sticker.emoji or ""}
+    if message.video:
+        return {"type": "video"}
     if message.animation:
-        return "[GIF]"
+        return {"type": "animation"}
+    if message.document:
+        return {"type": "document", "file_name": message.document.file_name or "файл"}
     if message.poll:
-        return f"[Опрос: {message.poll.question}]"
+        options = [opt.text for opt in message.poll.options]
+        return {"type": "poll", "question": message.poll.question, "options": options}
     if message.location:
-        return "[Геолокация]"
+        return {"type": "location"}
     if message.new_chat_members:
-        return f"[{', '.join(m.full_name for m in message.new_chat_members)}] принят(а) в группу"
-    return "[Сообщение без текста]"
+        names = ", ".join(m.full_name for m in message.new_chat_members)
+        return {"type": "new_members", "names": names}
+    return None
 
 
 def get_sender_name(message: Message) -> str:

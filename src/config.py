@@ -16,7 +16,7 @@ SURREALDB_DATABASE = os.getenv("SURREALDB_DATABASE", "messages")
 
 SUMMARY_INTERVAL = int(os.getenv("SUMMARY_INTERVAL", "7"))
 SUMMARY_INTERVALS = {
-    -1001829561306: 777,
+    -1001829561306: 500,
     -1002215041522: 7,
 }
 CHAT_IDS = sorted(SUMMARY_INTERVALS.keys())
@@ -34,6 +34,8 @@ MODELS = [
     'openai/gpt-5.2',
     'x-ai/grok-4.1-fast',
 ]
+
+IMAGE_MODEL = 'google/gemini-3-flash-preview'
 
 SYSTEM_PROMPT = """Ты — бот-саммаризатор сообщений в Telegram.
 

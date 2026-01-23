@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import io
 import logging
 import time
 
@@ -13,8 +15,8 @@ from .db import (
     save_message,
     set_last_summary_message_id,
 )
-from .llm import generate_summary, get_model_short_name
-from .utils import append_wide_log, fix_html, get_message_text, get_sender_name
+from .llm import describe_image, generate_summary, get_model_short_name
+from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +120,32 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> dict:
     return summary_info
 
 
+async def get_photo_description(message: Message) -> str | None:
+    """Скачивает фото и получает его описание от vision-модели."""
+    if not message.photo:
+        return None
+    
+    try:
+        # Берём самый большой размер (последний в списке)
+        largest_photo = message.photo[-1]
+        file = await bot.get_file(largest_photo.file_id)
+        
+        # Скачиваем в RAM
+        buffer = io.BytesIO()
+        await bot.download_file(file.file_path, buffer)
+        buffer.seek(0)
+        
+        # Конвертируем в base64
+        base64_image = base64.b64encode(buffer.read()).decode('utf-8')
+        
+        # Получаем описание
+        description = await describe_image(base64_image)
+        return description
+    except Exception as e:
+        logger.warning(f"Не удалось получить описание фото: {e}")
+        return None
+
+
 @router.message(F.chat.id.in_(CHAT_IDS))
 async def handle_message(message: Message):
     """Обрабатывает все сообщения из отслеживаемых чатов."""
@@ -125,6 +153,7 @@ async def handle_message(message: Message):
     
     message_text = get_message_text(message)
     sender_name = get_sender_name(message)
+    attachment = get_attachment_info(message)
     raw_message = message.model_dump(mode="json", exclude_none=True)
     
     context: dict = {
@@ -133,6 +162,15 @@ async def handle_message(message: Message):
         "timings_ms": {},
     }
     try:
+        # Получаем описание фото, если есть
+        photo_description = None
+        if message.photo:
+            photo_start = time.perf_counter()
+            photo_description = await get_photo_description(message)
+            context["timings_ms"]["photo_description"] = round((time.perf_counter() - photo_start) * 1000, 2)
+            if photo_description:
+                context["photo_description"] = photo_description
+        
         save_start = time.perf_counter()
         await save_message(
             chat_id=message.chat.id,
@@ -143,6 +181,8 @@ async def handle_message(message: Message):
             reply_to_message_id=message.reply_to_message.message_id if message.reply_to_message else None,
             timestamp=message.date.isoformat() if message.date else None,
             raw=raw_message,
+            attachment=attachment,
+            photo_description=photo_description,
         )
         context["timings_ms"]["save_message"] = round((time.perf_counter() - save_start) * 1000, 2)
         
