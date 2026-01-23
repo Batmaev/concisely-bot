@@ -2,7 +2,7 @@ import random
 
 from openai import AsyncOpenAI
 
-from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT, IMAGE_MODEL
+from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT, IMAGE_MODEL, VIDEO_MODEL
 
 openai_client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
@@ -29,7 +29,7 @@ def _get_forward_sender_name(raw: dict) -> str | None:
     return None
 
 
-def _format_attachment_block(attachment: dict | None, photo_description: str | None, sticker_description: str | None = None) -> str | None:
+def _format_attachment_block(attachment: dict | None, photo_description: str | None, sticker_description: str | None = None, video_note_description: str | None = None) -> str | None:
     """Форматирует блок вложения для промпта."""
     if not attachment:
         return None
@@ -47,6 +47,9 @@ def _format_attachment_block(attachment: dict | None, photo_description: str | N
         return "<voice />"
     
     if att_type == "video_note":
+        if video_note_description:
+            indented_desc = "\n".join(f"  {line}" for line in video_note_description.split("\n"))
+            return f"<video_note>\n{indented_desc}\n</video_note>"
         return "<video_note />"
     
     if att_type == "video":
@@ -96,6 +99,7 @@ def format_message_for_prompt(msg_data: dict) -> str:
     attachment = msg_data.get("attachment")
     photo_description = msg_data.get("photo_description")
     sticker_description = msg_data.get("sticker_description")
+    video_note_description = msg_data.get("video_note_description")
     
     # Проверяем, есть ли информация о форварде
     forward_name = _get_forward_sender_name(raw) if raw else None
@@ -113,7 +117,7 @@ def format_message_for_prompt(msg_data: dict) -> str:
     parts = [f"### {msg_id} {name}{labels_str}"]
     
     # Блок вложения
-    attachment_block = _format_attachment_block(attachment, photo_description, sticker_description)
+    attachment_block = _format_attachment_block(attachment, photo_description, sticker_description, video_note_description)
     if attachment_block:
         parts.append(attachment_block)
     
@@ -174,6 +178,21 @@ async def describe_sticker(base64_image: str) -> str:
             'content': [
                 {'type': 'input_text', 'text': 'Очень кратко опиши стикер. Если стикер представляет собой скриншот сообщения, ответь в формате "Имя:\\nтекст сообщения"'},
                 {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'}
+            ]
+        }]
+    )
+    return response.output_text
+
+
+async def describe_video_note(base64_video: str) -> str:
+    """Описывает видеосообщение с помощью vision-модели."""
+    response = await openai_client.responses.create(
+        model=VIDEO_MODEL,
+        input=[{
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': 'Что происходит / какие слова говорятся в видеосообщении?'},
+                {'type': 'input_video', 'video_url': f'data:video/mp4;base64,{base64_video}'}
             ]
         }]
     )

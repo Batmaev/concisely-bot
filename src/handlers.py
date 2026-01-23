@@ -17,7 +17,7 @@ from .db import (
     save_sticker_description,
     set_last_summary_message_id,
 )
-from .llm import describe_image, describe_sticker, generate_summary, get_model_short_name
+from .llm import describe_image, describe_sticker, describe_video_note, generate_summary, get_model_short_name
 from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name
 
 logger = logging.getLogger(__name__)
@@ -191,6 +191,25 @@ async def get_sticker_desc(message: Message) -> str | None:
         return None
 
 
+async def get_video_note_desc(message: Message) -> str | None:
+    """Получает описание видеосообщения от vision-модели."""
+    if not message.video_note:
+        return None
+    
+    try:
+        file = await bot.get_file(message.video_note.file_id)
+        
+        buffer = io.BytesIO()
+        await bot.download_file(file.file_path, buffer)
+        buffer.seek(0)
+        
+        base64_video = base64.b64encode(buffer.read()).decode('utf-8')
+        return await describe_video_note(base64_video)
+    except Exception as e:
+        logger.warning(f"Не удалось получить описание видеосообщения: {e}")
+        return None
+
+
 @router.message(F.chat.id.in_(CHAT_IDS))
 async def handle_message(message: Message):
     """Обрабатывает все сообщения из отслеживаемых чатов."""
@@ -225,6 +244,15 @@ async def handle_message(message: Message):
             if sticker_description:
                 context["sticker_description"] = sticker_description
         
+        # Получаем описание видеосообщения, если есть
+        video_note_description = None
+        if message.video_note:
+            video_note_start = time.perf_counter()
+            video_note_description = await get_video_note_desc(message)
+            context["timings_ms"]["video_note_description"] = round((time.perf_counter() - video_note_start) * 1000, 2)
+            if video_note_description:
+                context["video_note_description"] = video_note_description
+        
         save_start = time.perf_counter()
         await save_message(
             chat_id=message.chat.id,
@@ -238,6 +266,7 @@ async def handle_message(message: Message):
             attachment=attachment,
             photo_description=photo_description,
             sticker_description=sticker_description,
+            video_note_description=video_note_description,
         )
         context["timings_ms"]["save_message"] = round((time.perf_counter() - save_start) * 1000, 2)
         

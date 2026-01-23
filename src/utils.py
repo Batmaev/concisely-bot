@@ -32,7 +32,7 @@ def get_attachment_info(message: Message) -> dict | None:
     if message.voice:
         return {"type": "voice"}
     if message.video_note:
-        return {"type": "video_note"}
+        return {"type": "video_note", "duration": message.video_note.duration}
     if message.sticker:
         return {
             "type": "sticker",
