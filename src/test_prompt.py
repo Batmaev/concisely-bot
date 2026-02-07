@@ -5,14 +5,13 @@
     uv run -m src.test_prompt                      # последние 100 сообщений из дефолтного чата
     uv run -m src.test_prompt --limit 50           # последние 50 сообщений
     uv run -m src.test_prompt --from-id 220 --to-id 240  # конкретный диапазон
-    uv run -m src.test_prompt --output prompt.txt  # вывод в файл
+    uv run -m src.test_prompt --output prompt.txt        # вывод в файл
 """
 
 import argparse
 import asyncio
 import sys
 
-from .config import SYSTEM_PROMPT
 from .db import db, get_messages
 from .llm import generate_full_prompt
 
@@ -40,7 +39,6 @@ async def main():
     parser.add_argument("--to-id", type=int, help="ID сообщения до которого (inclusive)")
     parser.add_argument("--limit", "-n", type=int, default=DEFAULT_LIMIT, help=f"Количество последних сообщений (по умолчанию {DEFAULT_LIMIT})")
     parser.add_argument("--output", "-o", type=str, help="Файл для вывода (по умолчанию stdout)")
-    parser.add_argument("--full", action="store_true", help="Включить системный промпт")
     
     args = parser.parse_args()
     
@@ -62,9 +60,6 @@ async def main():
         print(f"Найдено {len(messages)} сообщений (chat_id={args.chat_id})", file=sys.stderr)
         
         prompt = generate_full_prompt(messages)
-        
-        if args.full:
-            prompt = SYSTEM_PROMPT + prompt
         
         if args.output:
             with open(args.output, "w") as f:

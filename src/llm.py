@@ -6,8 +6,30 @@ from io import BytesIO
 from openai import AsyncOpenAI
 from pydub import AudioSegment
 
-from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT, IMAGE_MODEL, VIDEO_MODEL, VOICE_MODEL
+from .config import OPENROUTER_API_KEY, MODELS, IMAGE_MODEL, VIDEO_MODEL, VOICE_MODEL
 from .utils import timed
+
+SUMMARIZATION_PROMPT = """Ты — бот-саммаризатор сообщений в Telegram.
+
+Сообщения поступают в формате:
+```
+### ID Name
+  text
+```
+
+Перескажи самые интересные / смешные моменты. 
+
+Требования:
+0. Язык ответа — русский
+1. Длина — приблизительно до 1200 символов
+2. Пиши только сам пересказ! Без фразы "Вот основные моменты", без заголовка "Пересказ", без рассуждений о чате в целом.
+3. Для форматирования используй html (не markdown).
+4. Используй только теги, поддерживаемые Telegram:
+   - <b>текст</b> (жирный)
+   - <i>текст</i> (курсив)
+   - <a href="URL">текст</a> (ссылки)
+5. Вместо списков (<ul>) используй символы-буллеты (• или -) и обычный перенос строки (\\n).
+6. Обязательно закрывай все теги."""
 
 openai_client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
@@ -144,13 +166,7 @@ def format_message_for_prompt(msg_data: dict) -> str:
 def generate_full_prompt(messages: list[dict]) -> str:
     """Генерирует полный промпт для LLM из списка сообщений."""
     messages_text = "\n\n".join(format_message_for_prompt(m) for m in messages)
-    return f"\n\n<messages>\n{messages_text}\n</messages>"
-
-
-@dataclass
-class DescribeResult:
-    text: str
-    cost: float | None = None
+    return SUMMARIZATION_PROMPT + f"\n\n<messages>\n{messages_text}\n</messages>"
 
 
 @dataclass
@@ -159,6 +175,32 @@ class SummaryResult:
     model: str
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cost: float | None = None
+
+
+async def generate_summary(messages: list[dict]) -> SummaryResult:
+    """Генерирует саммари с помощью OpenRouter."""
+    model = random.choice(MODELS)
+    prompt = generate_full_prompt(messages)
+    
+    response = await openai_client.responses.create(
+        model=model,
+        input=prompt
+    )
+    
+    result = SummaryResult(text=response.output_text, model=model)
+    result.cost = extract_cost(response)
+    
+    if usage := getattr(response, 'usage', None):
+        result.input_tokens = getattr(usage, 'input_tokens', None)
+        result.output_tokens = getattr(usage, 'output_tokens', None)
+    
+    return result
+
+
+@dataclass
+class DescribeResult:
+    text: str
     cost: float | None = None
 
 
@@ -229,21 +271,3 @@ async def describe_voice(audio_bytes: bytes) -> DescribeResult:
     )
 
 
-async def generate_summary(messages: list[dict]) -> SummaryResult:
-    """Генерирует саммари с помощью OpenRouter."""
-    model = random.choice(MODELS)
-    user_content = generate_full_prompt(messages)
-    
-    response = await openai_client.responses.create(
-        model=model,
-        input=SYSTEM_PROMPT + user_content
-    )
-    
-    result = SummaryResult(text=response.output_text, model=model)
-    result.cost = extract_cost(response)
-    
-    if usage := getattr(response, 'usage', None):
-        result.input_tokens = getattr(usage, 'input_tokens', None)
-        result.output_tokens = getattr(usage, 'output_tokens', None)
-    
-    return result
