@@ -19,6 +19,7 @@ services:
       - SURREALDB_URL=ws://surrealdb:8000/rpc
       - WIDE_LOG_DIR=/app/logs
     volumes:
+      - ./src:/app/src
       - ./logs:/app/logs
     depends_on:
       - surrealdb
