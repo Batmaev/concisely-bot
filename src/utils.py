@@ -11,16 +11,12 @@ from bs4 import BeautifulSoup
 log_context: contextvars.ContextVar[dict | None] = contextvars.ContextVar('log_context', default=None)
 
 
-def tracked(fn_or_key=None):
-    """Декоратор: замеряет время async-функции и пишет в текущий лог-контекст.
-    
+def timed(fn_or_key=None):
+    """Декоратор: замеряет время async-функции → timings[key] в лог-контексте.
+
     Использование:
-        @tracked              — ключ = имя функции
-        @tracked("my_key")    — ключ задан явно
-    
-    - Всегда записывает timings[key] (мс).
-    - Если результат — dict, добавляет timing_ms и сохраняет в context[key].
-    - Если лог-контекст не установлен — просто вызывает функцию.
+        @timed              — ключ = имя функции
+        @timed("my_key")    — ключ задан явно
     """
     def _wrap(fn, key):
         @functools.wraps(fn)
@@ -28,26 +24,53 @@ def tracked(fn_or_key=None):
             ctx = log_context.get()
             if ctx is None:
                 return await fn(*args, **kwargs)
-            
+
             timings = ctx.setdefault("timings", {})
             start = time.perf_counter()
             try:
-                result = await fn(*args, **kwargs)
+                return await fn(*args, **kwargs)
             finally:
                 timings[key] = round((time.perf_counter() - start) * 1000, 2)
-            
+        return wrapper
+
+    if callable(fn_or_key):
+        return _wrap(fn_or_key, fn_or_key.__name__)
+
+    def decorator(fn):
+        return _wrap(fn, fn_or_key or fn.__name__)
+    return decorator
+
+
+def logged(fn_or_key=None):
+    """Декоратор: сохраняет dict-результат async-функции в context[key].
+
+    Если в timings[key] уже есть время (от @timed) — добавляет timing_ms в результат.
+
+    Использование:
+        @logged              — ключ = имя функции
+        @logged("my_key")    — ключ задан явно
+    """
+    def _wrap(fn, key):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            ctx = log_context.get()
+            if ctx is None:
+                return await fn(*args, **kwargs)
+
+            result = await fn(*args, **kwargs)
+
             if isinstance(result, dict):
-                result["timing_ms"] = timings[key]
+                timing = ctx.get("timings", {}).get(key)
+                if timing is not None:
+                    result["timing_ms"] = timing
                 ctx[key] = result
-            
+
             return result
         return wrapper
-    
+
     if callable(fn_or_key):
-        # @tracked без аргументов
         return _wrap(fn_or_key, fn_or_key.__name__)
-    
-    # @tracked("key")
+
     def decorator(fn):
         return _wrap(fn, fn_or_key or fn.__name__)
     return decorator

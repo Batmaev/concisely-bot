@@ -24,7 +24,7 @@ from .llm import (
     describe_image, describe_sticker, describe_video_note,
     generate_summary, get_model_short_name,
 )
-from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name, log_context, tracked
+from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name, log_context, logged, timed
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +97,8 @@ async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> 
     }
 
 
-@tracked("summary")
+@logged("summary")
+@timed("summary")
 async def maybe_generate_summary(current_message_id: int, chat_id: int) -> SummaryInfo:
     """Проверяет, нужно ли генерировать саммари, и генерирует если нужно."""
     info: SummaryInfo = {"attempted": False, "sent": False}
@@ -165,7 +166,8 @@ class DescribeInfo(TypedDict):
     cost: float | None
 
 
-@tracked
+@logged
+@timed
 async def describe_attachment(message: Message, attachment: dict) -> DescribeInfo | None:
     """Получает описание вложения от vision-модели."""
     att_type = attachment["type"]

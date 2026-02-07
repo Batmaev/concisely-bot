@@ -11,7 +11,7 @@ from .config import (
     SURREALDB_URL,
     SURREALDB_USER,
 )
-from .utils import tracked
+from .utils import timed
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +87,7 @@ async def init_db():
     logger.info("База данных инициализирована")
 
 
-@tracked
+@timed
 async def get_last_summary_id(chat_id: int) -> int | None:
     """Получает ID последнего саммаризованного сообщения для чата."""
     rows = await db.fetch(
@@ -99,7 +99,7 @@ async def get_last_summary_id(chat_id: int) -> int | None:
     return None
 
 
-@tracked
+@timed
 async def set_last_summary_id(chat_id: int, message_id: int):
     """Устанавливает ID последнего саммаризованного сообщения для чата."""
     await db.query(
@@ -132,7 +132,7 @@ class SummaryData(TypedDict):
     cost: float | None
 
 
-@tracked
+@timed
 async def save_message(data: MessageData):
     """Сохраняет сообщение в БД.
     
@@ -151,7 +151,7 @@ async def save_message(data: MessageData):
     await db.create("message", record)
 
 
-@tracked
+@timed
 async def get_messages(chat_id: int, from_id: int, to_id: int) -> list[dict]:
     """Получает сообщения для саммаризации."""
     return await db.fetch(
@@ -164,7 +164,7 @@ async def get_messages(chat_id: int, from_id: int, to_id: int) -> list[dict]:
     )
 
 
-@tracked
+@timed
 async def get_sticker(file_unique_id: str) -> str | None:
     """Получает описание стикера из кэша."""
     rows = await db.fetch(
@@ -176,7 +176,7 @@ async def get_sticker(file_unique_id: str) -> str | None:
     return None
 
 
-@tracked
+@timed
 async def save_summary(data: SummaryData):
     """Сохраняет сгенерированное саммари в БД."""
     from datetime import datetime, timezone
@@ -184,7 +184,7 @@ async def save_summary(data: SummaryData):
     await db.create("summary", record)
 
 
-@tracked
+@timed
 async def save_sticker(file_unique_id: str, description: str):
     """Сохраняет описание стикера в кэш."""
     await db.create("sticker_cache", {
