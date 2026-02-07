@@ -1,9 +1,13 @@
+import base64
 import random
 from dataclasses import dataclass
+from io import BytesIO
 
 from openai import AsyncOpenAI
+from pydub import AudioSegment
 
-from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT, IMAGE_MODEL, VIDEO_MODEL
+from .config import OPENROUTER_API_KEY, MODELS, SYSTEM_PROMPT, IMAGE_MODEL, VIDEO_MODEL, VOICE_MODEL
+from .utils import timed
 
 openai_client = AsyncOpenAI(
     api_key=OPENROUTER_API_KEY,
@@ -47,6 +51,8 @@ def _format_attachment_block(attachment: dict | None, description: str | None = 
         return "<photo />"
     
     if att_type == "voice":
+        if description:
+            return f"<voice>\n{_indent(description)}\n</voice>"
         return "<voice />"
     
     if att_type == "video_note":
@@ -162,14 +168,14 @@ def get_model_short_name(model: str) -> str:
     return model.split('/')[-1]
 
 
-def _extract_cost(response) -> float | None:
+def extract_cost(response) -> float | None:
     if usage := getattr(response, 'usage', None):
         return getattr(usage, 'cost', None)
     return None
 
 
-async def _call_vision(model: str, prompt: str, media_content: dict) -> DescribeResult:
-    """Общий вызов vision-модели."""
+async def call_multimodal(model: str, prompt: str, media_content: dict) -> DescribeResult:
+    """Общий вызов мультимодальной модели (vision / audio)."""
     response = await openai_client.responses.create(
         model=model,
         input=[{
@@ -180,26 +186,47 @@ async def _call_vision(model: str, prompt: str, media_content: dict) -> Describe
             ]
         }]
     )
-    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
+    return DescribeResult(text=response.output_text, cost=extract_cost(response))
 
 
 async def describe_image(base64_image: str) -> DescribeResult:
     """Описывает изображение с помощью vision-модели."""
-    return await _call_vision(IMAGE_MODEL, 'Что изображено на картинке? Кратко',
+    return await call_multimodal(IMAGE_MODEL, 'Что изображено на картинке? Кратко',
         {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'})
 
 
 async def describe_sticker(base64_image: str) -> DescribeResult:
     """Описывает стикер с помощью vision-модели."""
-    return await _call_vision(IMAGE_MODEL,
+    return await call_multimodal(IMAGE_MODEL,
         'Очень кратко опиши стикер. Если стикер представляет собой скриншот сообщения, ответь в формате "Имя:\\nтекст сообщения"',
         {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'})
 
 
 async def describe_video_note(base64_video: str) -> DescribeResult:
     """Описывает видеосообщение с помощью vision-модели."""
-    return await _call_vision(VIDEO_MODEL, 'Что происходит / какие слова говорятся в видеосообщении?',
+    return await call_multimodal(VIDEO_MODEL, 'Что происходит / какие слова говорятся в видеосообщении?',
         {'type': 'input_video', 'video_url': f'data:video/mp4;base64,{base64_video}'})
+
+
+@timed
+async def convert_ogg_to_mp3(audio_bytes: bytes) -> bytes:
+    """Конвертирует OGG-аудио в MP3."""
+    audio = AudioSegment.from_ogg(BytesIO(audio_bytes))
+    mp3_buffer = BytesIO()
+    audio.export(mp3_buffer, format='mp3')
+    return mp3_buffer.getvalue()
+
+
+async def describe_voice(audio_bytes: bytes) -> DescribeResult:
+    """Расшифровывает голосовое сообщение (ogg). Конвертирует в mp3 для Responses API."""
+    mp3_bytes = await convert_ogg_to_mp3(audio_bytes)
+    base64_audio = base64.b64encode(mp3_bytes).decode()
+
+    return await call_multimodal(
+        VOICE_MODEL,
+        'Расшифруй это голосовое сообщение. Выведи только текст.',
+        {'type': 'input_audio', 'input_audio': {'data': base64_audio, 'format': 'mp3'}},
+    )
 
 
 async def generate_summary(messages: list[dict]) -> SummaryResult:
@@ -213,7 +240,7 @@ async def generate_summary(messages: list[dict]) -> SummaryResult:
     )
     
     result = SummaryResult(text=response.output_text, model=model)
-    result.cost = _extract_cost(response)
+    result.cost = extract_cost(response)
     
     if usage := getattr(response, 'usage', None):
         result.input_tokens = getattr(usage, 'input_tokens', None)

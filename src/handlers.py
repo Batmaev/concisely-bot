@@ -22,7 +22,7 @@ from .db import (
     set_last_summary_id,
 )
 from .llm import (
-    describe_image, describe_sticker, describe_video_note,
+    describe_image, describe_sticker, describe_video_note, describe_voice,
     generate_summary, get_model_short_name,
 )
 from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name, log_context, log_warning, logged, timed
@@ -147,13 +147,19 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> Summa
     return info
 
 
-async def _download_file_base64(file_id: str) -> str:
-    """Скачивает файл из Telegram и возвращает base64."""
+async def _download_file_bytes(file_id: str) -> bytes:
+    """Скачивает файл из Telegram и возвращает сырые байты."""
     file = await bot.get_file(file_id)
     buffer = io.BytesIO()
     await bot.download_file(file.file_path, buffer)
     buffer.seek(0)
-    return base64.b64encode(buffer.read()).decode('utf-8')
+    return buffer.read()
+
+
+async def _download_file_base64(file_id: str) -> str:
+    """Скачивает файл из Telegram и возвращает base64."""
+    raw = await _download_file_bytes(file_id)
+    return base64.b64encode(raw).decode('utf-8')
 
 
 class DescribeInfo(TypedDict):
@@ -188,6 +194,10 @@ async def describe_attachment(message: Message, attachment: dict) -> DescribeInf
             b64 = await _download_file_base64(file_id)
             result = await describe_sticker(b64)
             await save_sticker(sticker.file_unique_id, result.text)
+        
+        elif att_type == "voice" and message.voice:
+            raw = await _download_file_bytes(message.voice.file_id)
+            result = await describe_voice(raw)
         
         elif att_type == "video_note" and message.video_note:
             b64 = await _download_file_base64(message.video_note.file_id)

@@ -37,6 +37,8 @@ IMAGE_MODEL = 'google/gemini-3-flash-preview'
 
 VIDEO_MODEL = 'google/gemini-3-flash-preview'
 
+VOICE_MODEL = 'google/gemini-3-flash-preview'
+
 SYSTEM_PROMPT = """Ты — бот-саммаризатор сообщений в Telegram.
 
 Сообщения поступают в формате:
