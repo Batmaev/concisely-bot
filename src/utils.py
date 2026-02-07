@@ -11,6 +11,13 @@ from bs4 import BeautifulSoup
 log_context: contextvars.ContextVar[dict | None] = contextvars.ContextVar('log_context', default=None)
 
 
+def log_warning(msg: str):
+    """Добавляет предупреждение в текущий лог-контекст (попадёт в wide log)."""
+    ctx = log_context.get()
+    if ctx is not None:
+        ctx.setdefault("warnings", []).append(msg)
+
+
 def timed(fn_or_key=None):
     """Декоратор: замеряет время async-функции → timings[key] в лог-контексте.
 

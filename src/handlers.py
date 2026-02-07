@@ -3,6 +3,7 @@ import base64
 import io
 import logging
 import time
+import traceback
 from dataclasses import asdict
 from typing import TypedDict
 
@@ -24,7 +25,7 @@ from .llm import (
     describe_image, describe_sticker, describe_video_note,
     generate_summary, get_model_short_name,
 )
-from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name, log_context, logged, timed
+from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name, log_context, log_warning, logged, timed
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +49,7 @@ async def send_summary(chat_id: int, summary: str, model: str):
     try:
         await bot.send_message(chat_id, full_message, parse_mode=ParseMode.HTML)
     except Exception as e:
-        logger.warning(f"Ошибка отправки HTML, отправляем plain text: {e}")
+        log_warning(f"html_fallback: {e}")
         await bot.send_message(chat_id, full_message)
 
 
@@ -80,7 +81,6 @@ async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> 
     """Генерирует, отправляет и сохраняет саммари. Возвращает данные для лога и БД."""
     messages = await get_messages(chat_id, from_id, to_id)
     if not messages:
-        logger.warning(f"Нет сообщений для саммаризации в чате {chat_id}")
         return {"messages_count": 0, "reason": "no_messages"}
     
     result = await generate_summary(messages)
@@ -134,18 +134,13 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> Summa
     
     try:
         info["attempted"] = True
-        logger.info(f"Генерируем саммари для чата {chat_id}, сообщения {last_summary_id + 1} - {current_message_id}")
         
         gen_result = await _generate_and_send_summary(chat_id, last_summary_id, current_message_id)
         info.update(gen_result)
         
-        if info.get("sent"):
-            logger.info(f"Саммари для чата {chat_id} отправлено")
-        
     except Exception as e:
         info["reason"] = "error"
         info["error"] = str(e)
-        logger.error(f"Ошибка при генерации саммари для чата {chat_id}: {e}")
     finally:
         generating_chats.discard(chat_id)
     
@@ -185,7 +180,7 @@ async def describe_attachment(message: Message, attachment: dict) -> DescribeInf
             # Для анимированных/видео стикеров используем thumbnail
             if sticker.is_animated or sticker.is_video:
                 if not sticker.thumbnail:
-                    logger.warning(f"У анимированного стикера {sticker.file_unique_id} нет thumbnail")
+                    log_warning(f"sticker {sticker.file_unique_id}: нет thumbnail")
                     return None
                 file_id = sticker.thumbnail.file_id
             else:
@@ -201,7 +196,7 @@ async def describe_attachment(message: Message, attachment: dict) -> DescribeInf
         else:
             return None
     except Exception as e:
-        logger.warning(f"Не удалось получить описание {att_type}: {e}")
+        log_warning(f"describe_{att_type}: {e}")
         return None
     
     return {"description": result.text, "cost": result.cost}
@@ -243,7 +238,7 @@ async def handle_message(message: Message):
         
     except Exception as e:
         context["error"] = str(e)
-        logger.error(f"Ошибка обработки сообщения: {e}", exc_info=True)
+        context["error_traceback"] = traceback.format_exc()
     finally:
         context["timings"]["total"] = round((time.perf_counter() - start) * 1000, 2)
         log_context.reset(token)
