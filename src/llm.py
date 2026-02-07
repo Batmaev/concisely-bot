@@ -30,7 +30,11 @@ def _get_forward_sender_name(raw: dict) -> str | None:
     return None
 
 
-def _format_attachment_block(attachment: dict | None, photo_description: str | None, sticker_description: str | None = None, video_note_description: str | None = None) -> str | None:
+def _indent(text: str) -> str:
+    return "\n".join(f"  {line}" for line in text.split("\n"))
+
+
+def _format_attachment_block(attachment: dict | None, description: str | None = None) -> str | None:
     """Форматирует блок вложения для промпта."""
     if not attachment:
         return None
@@ -38,19 +42,16 @@ def _format_attachment_block(attachment: dict | None, photo_description: str | N
     att_type = attachment.get("type")
     
     if att_type == "photo":
-        if photo_description:
-            # Каждая строка описания с отступом в 2 пробела
-            indented_desc = "\n".join(f"  {line}" for line in photo_description.split("\n"))
-            return f"<photo>\n{indented_desc}\n</photo>"
+        if description:
+            return f"<photo>\n{_indent(description)}\n</photo>"
         return "<photo />"
     
     if att_type == "voice":
         return "<voice />"
     
     if att_type == "video_note":
-        if video_note_description:
-            indented_desc = "\n".join(f"  {line}" for line in video_note_description.split("\n"))
-            return f"<video_note>\n{indented_desc}\n</video_note>"
+        if description:
+            return f"<video_note>\n{_indent(description)}\n</video_note>"
         return "<video_note />"
     
     if att_type == "video":
@@ -60,9 +61,8 @@ def _format_attachment_block(attachment: dict | None, photo_description: str | N
         return "<gif />"
     
     if att_type == "sticker":
-        if sticker_description:
-            indented_desc = "\n".join(f"  {line}" for line in sticker_description.split("\n"))
-            return f"<sticker>\n{indented_desc}\n</sticker>"
+        if description:
+            return f"<sticker>\n{_indent(description)}\n</sticker>"
         emoji = attachment.get("emoji", "")
         if emoji:
             return f"<sticker>{emoji}</sticker>"
@@ -90,6 +90,17 @@ def _format_attachment_block(attachment: dict | None, photo_description: str | N
     return None
 
 
+def _get_attachment_description(msg_data: dict) -> str | None:
+    """Извлекает описание вложения: новый формат (attachment.description) или legacy-поля."""
+    attachment = msg_data.get("attachment")
+    if attachment and (desc := attachment.get("description")):
+        return desc
+    # Фолбек на старый формат
+    return (msg_data.get("photo_description")
+            or msg_data.get("sticker_description")
+            or msg_data.get("video_note_description"))
+
+
 def format_message_for_prompt(msg_data: dict) -> str:
     """Форматирует сообщение для промпта."""
     msg_id = msg_data["message_id"]
@@ -98,9 +109,6 @@ def format_message_for_prompt(msg_data: dict) -> str:
     reply_to = msg_data.get("reply_to_message_id")
     raw = msg_data.get("raw", {})
     attachment = msg_data.get("attachment")
-    photo_description = msg_data.get("photo_description")
-    sticker_description = msg_data.get("sticker_description")
-    video_note_description = msg_data.get("video_note_description")
     
     # Проверяем, есть ли информация о форварде
     forward_name = _get_forward_sender_name(raw) if raw else None
@@ -117,13 +125,10 @@ def format_message_for_prompt(msg_data: dict) -> str:
     # Собираем части сообщения
     parts = [f"### {msg_id} {name}{labels_str}"]
     
-    # Текст/caption с отступом
     if text:
-        indented_text = "\n".join(f"  {line}" for line in text.split("\n"))
-        parts.append(indented_text)
+        parts.append(_indent(text))
     
-    # Блок вложения
-    attachment_block = _format_attachment_block(attachment, photo_description, sticker_description, video_note_description)
+    attachment_block = _format_attachment_block(attachment, _get_attachment_description(msg_data))
     if attachment_block:
         parts.append(attachment_block)
     
@@ -134,6 +139,12 @@ def generate_full_prompt(messages: list[dict]) -> str:
     """Генерирует полный промпт для LLM из списка сообщений."""
     messages_text = "\n\n".join(format_message_for_prompt(m) for m in messages)
     return f"\n\n<messages>\n{messages_text}\n</messages>"
+
+
+@dataclass
+class DescribeResult:
+    text: str
+    cost: float | None = None
 
 
 @dataclass
@@ -156,12 +167,11 @@ async def generate_summary(messages: list[dict]) -> SummaryResult:
     )
     
     result = SummaryResult(text=response.output_text, model=model)
+    result.cost = _extract_cost(response)
     
     if usage := getattr(response, 'usage', None):
         result.input_tokens = getattr(usage, 'input_tokens', None)
         result.output_tokens = getattr(usage, 'output_tokens', None)
-    
-    result.cost = getattr(response, 'cost', None)
     
     return result
 
@@ -172,7 +182,13 @@ def get_model_short_name(model: str) -> str:
     return model.split('/')[-1]
 
 
-async def describe_image(base64_image: str) -> str:
+def _extract_cost(response) -> float | None:
+    if usage := getattr(response, 'usage', None):
+        return getattr(usage, 'cost', None)
+    return None
+
+
+async def describe_image(base64_image: str) -> DescribeResult:
     """Описывает изображение с помощью vision-модели."""
     response = await openai_client.responses.create(
         model=IMAGE_MODEL,
@@ -184,10 +200,10 @@ async def describe_image(base64_image: str) -> str:
             ]
         }]
     )
-    return response.output_text
+    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
 
 
-async def describe_sticker(base64_image: str) -> str:
+async def describe_sticker(base64_image: str) -> DescribeResult:
     """Описывает стикер с помощью vision-модели."""
     response = await openai_client.responses.create(
         model=IMAGE_MODEL,
@@ -199,10 +215,10 @@ async def describe_sticker(base64_image: str) -> str:
             ]
         }]
     )
-    return response.output_text
+    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
 
 
-async def describe_video_note(base64_video: str) -> str:
+async def describe_video_note(base64_video: str) -> DescribeResult:
     """Описывает видеосообщение с помощью vision-модели."""
     response = await openai_client.responses.create(
         model=VIDEO_MODEL,
@@ -214,4 +230,4 @@ async def describe_video_note(base64_video: str) -> str:
             ]
         }]
     )
-    return response.output_text
+    return DescribeResult(text=response.output_text, cost=_extract_cost(response))

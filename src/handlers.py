@@ -18,7 +18,10 @@ from .db import (
     save_summary,
     set_last_summary_message_id,
 )
-from .llm import describe_image, describe_sticker, describe_video_note, generate_summary, get_model_short_name
+from .llm import (
+    describe_image, describe_sticker, describe_video_note,
+    generate_summary, get_model_short_name,
+)
 from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name
 
 logger = logging.getLogger(__name__)
@@ -105,6 +108,7 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> dict:
         await send_summary(chat_id, result.text, result.model)
         summary_info["model"] = result.model
         summary_info["summary_chars"] = len(result.text)
+        summary_info["cost"] = result.cost
         
         await set_last_summary_message_id(chat_id, current_message_id)
         summary_info["new_last_summary_id"] = current_message_id
@@ -136,92 +140,66 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> dict:
     return summary_info
 
 
-async def get_photo_description(message: Message) -> str | None:
-    """Скачивает фото и получает его описание от vision-модели."""
-    if not message.photo:
-        return None
-    
-    try:
-        # Берём самый большой размер (последний в списке)
-        largest_photo = message.photo[-1]
-        file = await bot.get_file(largest_photo.file_id)
-        
-        # Скачиваем в RAM
-        buffer = io.BytesIO()
-        await bot.download_file(file.file_path, buffer)
-        buffer.seek(0)
-        
-        # Конвертируем в base64
-        base64_image = base64.b64encode(buffer.read()).decode('utf-8')
-        
-        # Получаем описание
-        description = await describe_image(base64_image)
-        return description
-    except Exception as e:
-        logger.warning(f"Не удалось получить описание фото: {e}")
-        return None
+async def _download_file_base64(file_id: str) -> str:
+    """Скачивает файл из Telegram и возвращает base64."""
+    file = await bot.get_file(file_id)
+    buffer = io.BytesIO()
+    await bot.download_file(file.file_path, buffer)
+    buffer.seek(0)
+    return base64.b64encode(buffer.read()).decode('utf-8')
 
 
-async def get_sticker_desc(message: Message) -> str | None:
-    """Получает описание стикера (из кэша или от vision-модели)."""
-    if not message.sticker:
+async def _describe_attachment(message: Message, attachment: dict | None) -> float | None:
+    """Получает описание вложения и записывает его в attachment['description'].
+    
+    Возвращает время выполнения в ms (или None если описание не требуется).
+    """
+    if not attachment:
         return None
     
-    sticker = message.sticker
-    file_unique_id = sticker.file_unique_id
-    
-    # Сначала проверяем кэш
-    cached = await get_sticker_description(file_unique_id)
-    if cached is not None:
-        return cached
+    att_type = attachment["type"]
+    start = time.perf_counter()
     
     try:
-        # Для анимированных/видео стикеров используем thumbnail
-        if sticker.is_animated or sticker.is_video:
-            if not sticker.thumbnail:
-                logger.warning(f"У анимированного стикера {file_unique_id} нет thumbnail")
-                return None
-            file = await bot.get_file(sticker.thumbnail.file_id)
+        if att_type == "photo" and message.photo:
+            b64 = await _download_file_base64(message.photo[-1].file_id)
+            result = await describe_image(b64)
+            attachment["description"] = result.text
+            attachment["describe_cost"] = result.cost
+        
+        elif att_type == "sticker" and message.sticker:
+            sticker = message.sticker
+            # Сначала проверяем кэш
+            cached = await get_sticker_description(sticker.file_unique_id)
+            if cached is not None:
+                attachment["description"] = cached
+            else:
+                # Для анимированных/видео стикеров используем thumbnail
+                if sticker.is_animated or sticker.is_video:
+                    if not sticker.thumbnail:
+                        logger.warning(f"У анимированного стикера {sticker.file_unique_id} нет thumbnail")
+                        return round((time.perf_counter() - start) * 1000, 2)
+                    file_id = sticker.thumbnail.file_id
+                else:
+                    file_id = sticker.file_id
+                b64 = await _download_file_base64(file_id)
+                result = await describe_sticker(b64)
+                attachment["description"] = result.text
+                attachment["describe_cost"] = result.cost
+                await save_sticker_description(sticker.file_unique_id, result.text)
+        
+        elif att_type == "video_note" and message.video_note:
+            b64 = await _download_file_base64(message.video_note.file_id)
+            result = await describe_video_note(b64)
+            attachment["description"] = result.text
+            attachment["describe_cost"] = result.cost
+        
         else:
-            file = await bot.get_file(sticker.file_id)
-        
-        # Скачиваем в RAM
-        buffer = io.BytesIO()
-        await bot.download_file(file.file_path, buffer)
-        buffer.seek(0)
-        
-        # Конвертируем в base64
-        base64_image = base64.b64encode(buffer.read()).decode('utf-8')
-        
-        # Получаем описание
-        description = await describe_sticker(base64_image)
-        
-        # Сохраняем в кэш
-        await save_sticker_description(file_unique_id, description)
-        
-        return description
+            return None
     except Exception as e:
-        logger.warning(f"Не удалось получить описание стикера: {e}")
-        return None
-
-
-async def get_video_note_desc(message: Message) -> str | None:
-    """Получает описание видеосообщения от vision-модели."""
-    if not message.video_note:
-        return None
+        logger.warning(f"Не удалось получить описание {att_type}: {e}")
     
-    try:
-        file = await bot.get_file(message.video_note.file_id)
-        
-        buffer = io.BytesIO()
-        await bot.download_file(file.file_path, buffer)
-        buffer.seek(0)
-        
-        base64_video = base64.b64encode(buffer.read()).decode('utf-8')
-        return await describe_video_note(base64_video)
-    except Exception as e:
-        logger.warning(f"Не удалось получить описание видеосообщения: {e}")
-        return None
+    return round((time.perf_counter() - start) * 1000, 2)
 
 
 @router.message(F.chat.id.in_(CHAT_IDS))
@@ -229,8 +207,6 @@ async def handle_message(message: Message):
     """Обрабатывает все сообщения из отслеживаемых чатов."""
     start_time = time.perf_counter()
     
-    message_text = get_message_text(message)
-    sender_name = get_sender_name(message)
     attachment = get_attachment_info(message)
     raw_message = message.model_dump(mode="json", exclude_none=True)
     
@@ -240,47 +216,25 @@ async def handle_message(message: Message):
         "timings_ms": {},
     }
     try:
-        # Получаем описание фото, если есть
-        photo_description = None
-        if message.photo:
-            photo_start = time.perf_counter()
-            photo_description = await get_photo_description(message)
-            context["timings_ms"]["photo_description"] = round((time.perf_counter() - photo_start) * 1000, 2)
-            if photo_description:
-                context["photo_description"] = photo_description
-        
-        # Получаем описание стикера, если есть
-        sticker_description = None
-        if message.sticker:
-            sticker_start = time.perf_counter()
-            sticker_description = await get_sticker_desc(message)
-            context["timings_ms"]["sticker_description"] = round((time.perf_counter() - sticker_start) * 1000, 2)
-            if sticker_description:
-                context["sticker_description"] = sticker_description
-        
-        # Получаем описание видеосообщения, если есть
-        video_note_description = None
-        if message.video_note:
-            video_note_start = time.perf_counter()
-            video_note_description = await get_video_note_desc(message)
-            context["timings_ms"]["video_note_description"] = round((time.perf_counter() - video_note_start) * 1000, 2)
-            if video_note_description:
-                context["video_note_description"] = video_note_description
+        describe_ms = await _describe_attachment(message, attachment)
+        if describe_ms is not None:
+            context["timings_ms"]["describe_attachment"] = describe_ms
+            if attachment and attachment.get("description"):
+                context["attachment_description"] = attachment["description"]
+            if attachment and attachment.get("describe_cost") is not None:
+                context["describe_cost"] = attachment["describe_cost"]
         
         save_start = time.perf_counter()
         await save_message(
             chat_id=message.chat.id,
             message_id=message.message_id,
             sender_id=message.from_user.id if message.from_user else None,
-            sender_name=sender_name,
-            text=message_text,
+            sender_name=get_sender_name(message),
+            text=get_message_text(message),
             reply_to_message_id=message.reply_to_message.message_id if message.reply_to_message else None,
             timestamp=message.date.isoformat() if message.date else None,
             raw=raw_message,
             attachment=attachment,
-            photo_description=photo_description,
-            sticker_description=sticker_description,
-            video_note_description=video_note_description,
         )
         context["timings_ms"]["save_message"] = round((time.perf_counter() - save_start) * 1000, 2)
         
