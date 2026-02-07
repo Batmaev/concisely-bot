@@ -15,6 +15,7 @@ from .db import (
     get_sticker_description,
     save_message,
     save_sticker_description,
+    save_summary,
     set_last_summary_message_id,
 )
 from .llm import describe_image, describe_sticker, describe_video_note, generate_summary, get_model_short_name
@@ -100,14 +101,27 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> dict:
             summary_info["reason"] = "no_messages"
             return summary_info
         
-        summary, model = await generate_summary(messages)
-        await send_summary(chat_id, summary, model)
-        summary_info["model"] = model
-        summary_info["summary_chars"] = len(summary)
+        result = await generate_summary(messages)
+        await send_summary(chat_id, result.text, result.model)
+        summary_info["model"] = result.model
+        summary_info["summary_chars"] = len(result.text)
         
         await set_last_summary_message_id(chat_id, current_message_id)
         summary_info["new_last_summary_id"] = current_message_id
         summary_info["sent"] = True
+        
+        duration_ms = round((time.perf_counter() - start_time) * 1000, 2)
+        await save_summary(
+            chat_id=chat_id,
+            from_message_id=last_summary_id,
+            to_message_id=current_message_id,
+            model=result.model,
+            duration_ms=duration_ms,
+            summary_text=result.text,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            cost=result.cost,
+        )
         
         logger.info(f"Саммари для чата {chat_id} отправлено, новый last_summary_message_id: {current_message_id}")
         

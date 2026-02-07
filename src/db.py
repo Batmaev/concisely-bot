@@ -80,6 +80,8 @@ async def init_db():
     await db.query("DEFINE INDEX IF NOT EXISTS chat_state_idx ON TABLE chat_state COLUMNS chat_id UNIQUE;")
     await db.query("DEFINE TABLE IF NOT EXISTS sticker_cache SCHEMALESS;")
     await db.query("DEFINE INDEX IF NOT EXISTS sticker_cache_idx ON TABLE sticker_cache COLUMNS file_unique_id UNIQUE;")
+    await db.query("DEFINE TABLE IF NOT EXISTS summary SCHEMALESS;")
+    await db.query("DEFINE INDEX IF NOT EXISTS summary_chat_idx ON TABLE summary COLUMNS chat_id;")
     logger.info("База данных инициализирована")
 
 
@@ -151,6 +153,27 @@ async def get_sticker_description(file_unique_id: str) -> str | None:
     if rows and "description" in rows[0]:
         return rows[0]["description"]
     return None
+
+
+async def save_summary(chat_id: int, from_message_id: int, to_message_id: int,
+                       model: str, duration_ms: float, summary_text: str,
+                       input_tokens: int | None = None, output_tokens: int | None = None,
+                       cost: float | None = None):
+    """Сохраняет сгенерированное саммари в БД."""
+    from datetime import datetime, timezone
+    data = {
+        "chat_id": chat_id,
+        "from_message_id": from_message_id,
+        "to_message_id": to_message_id,
+        "model": model,
+        "duration_ms": duration_ms,
+        "summary_text": summary_text,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost": cost,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.create("summary", data)
 
 
 async def save_sticker_description(file_unique_id: str, description: str):

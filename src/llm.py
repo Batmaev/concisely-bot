@@ -1,4 +1,5 @@
 import random
+from dataclasses import dataclass
 
 from openai import AsyncOpenAI
 
@@ -116,15 +117,15 @@ def format_message_for_prompt(msg_data: dict) -> str:
     # Собираем части сообщения
     parts = [f"### {msg_id} {name}{labels_str}"]
     
-    # Блок вложения
-    attachment_block = _format_attachment_block(attachment, photo_description, sticker_description, video_note_description)
-    if attachment_block:
-        parts.append(attachment_block)
-    
     # Текст/caption с отступом
     if text:
         indented_text = "\n".join(f"  {line}" for line in text.split("\n"))
         parts.append(indented_text)
+    
+    # Блок вложения
+    attachment_block = _format_attachment_block(attachment, photo_description, sticker_description, video_note_description)
+    if attachment_block:
+        parts.append(attachment_block)
     
     return "\n".join(parts)
 
@@ -135,7 +136,16 @@ def generate_full_prompt(messages: list[dict]) -> str:
     return f"\n\n<messages>\n{messages_text}\n</messages>"
 
 
-async def generate_summary(messages: list[dict]) -> tuple[str, str]:
+@dataclass
+class SummaryResult:
+    text: str
+    model: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost: float | None = None
+
+
+async def generate_summary(messages: list[dict]) -> SummaryResult:
     """Генерирует саммари с помощью OpenRouter."""
     model = random.choice(MODELS)
     user_content = generate_full_prompt(messages)
@@ -145,7 +155,15 @@ async def generate_summary(messages: list[dict]) -> tuple[str, str]:
         input=SYSTEM_PROMPT + user_content
     )
     
-    return response.output_text, model
+    result = SummaryResult(text=response.output_text, model=model)
+    
+    if usage := getattr(response, 'usage', None):
+        result.input_tokens = getattr(usage, 'input_tokens', None)
+        result.output_tokens = getattr(usage, 'output_tokens', None)
+    
+    result.cost = getattr(response, 'cost', None)
+    
+    return result
 
 
 def get_model_short_name(model: str) -> str:
