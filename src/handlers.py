@@ -4,15 +4,15 @@ import io
 import logging
 import time
 import traceback
-from dataclasses import asdict
 from typing import TypedDict
 
 from aiogram import Bot, F, Router
 from aiogram.types import Message
 from aiogram.enums import ParseMode
 
-from .config import BOT_TOKEN, CHAT_IDS, SUMMARY_INTERVAL, SUMMARY_INTERVALS, WIDE_LOG_DIR
+from .config import BOT_TOKEN, CHAT_IDS, SUMMARY_INTERVALS, WIDE_LOG_DIR
 from .db import (
+    SummaryData,
     get_last_summary_id,
     get_messages,
     get_sticker,
@@ -25,7 +25,7 @@ from .llm import (
     describe_image, describe_sticker, describe_video_note, describe_voice,
     generate_summary, get_model_short_name,
 )
-from .utils import append_wide_log, fix_html, get_attachment_info, get_message_text, get_sender_name, log_context, log_warning, logged, timed
+from .utils import append_wide_log, fix_html, get_attachment_info, get_forward_sender_name, get_message_text, get_sender_name, log_context, log_warning, logged, timed
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ async def send_summary(chat_id: int, summary: str, model: str):
 
 
 class SummaryInfo(TypedDict, total=False):
-    """Результат maybe_generate_summary — данные для лога и БД."""
+    """Результат maybe_generate_summary — данные для лога."""
     # Статус
     attempted: bool
     sent: bool
@@ -64,41 +64,36 @@ class SummaryInfo(TypedDict, total=False):
     last_summary_id: int | None
     messages_since_last: int
     interval: int
-    messages_count: int
     timing_ms: float
     # Данные саммари (если sent)
-    chat_id: int
-    from_message_id: int
-    to_message_id: int
-    text: str
-    model: str
-    input_tokens: int | None
-    output_tokens: int | None
-    cost: float | None
+    data: SummaryData
 
 
-async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> SummaryInfo:
-    """Генерирует, отправляет и сохраняет саммари. Возвращает данные для лога и БД."""
+@timed("summary")
+async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> SummaryData | None:
+    """Генерирует, отправляет и сохраняет саммари."""
     messages = await get_messages(chat_id, from_id, to_id)
     if not messages:
-        return {"messages_count": 0, "reason": "no_messages"}
+        return None
     
     result = await generate_summary(messages)
     await send_summary(chat_id, result.text, result.model)
     await set_last_summary_id(chat_id, to_id)
     
-    return {
-        "chat_id": chat_id,
-        "from_message_id": from_id,
-        "to_message_id": to_id,
-        "messages_count": len(messages),
-        "sent": True,
-        **asdict(result),
-    }
+    return SummaryData(
+        chat_id=chat_id,
+        from_message_id=from_id,
+        to_message_id=to_id,
+        messages_count=len(messages),
+        text=result.text,
+        model=result.model,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        cost=result.cost,
+    )
 
 
 @logged("summary")
-@timed("summary")
 async def maybe_generate_summary(current_message_id: int, chat_id: int) -> SummaryInfo:
     """Проверяет, нужно ли генерировать саммари, и генерирует если нужно."""
     info: SummaryInfo = {"attempted": False, "sent": False}
@@ -123,7 +118,7 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> Summa
             info["reason"] = "first_run"
             return info
         
-        interval = SUMMARY_INTERVALS.get(chat_id, SUMMARY_INTERVAL)
+        interval = SUMMARY_INTERVALS[chat_id]
         if current_message_id - last_summary_id < interval:
             info["reason"] = "interval_not_reached"
             info["messages_since_last"] = current_message_id - last_summary_id
@@ -135,8 +130,12 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> Summa
     try:
         info["attempted"] = True
         
-        gen_result = await _generate_and_send_summary(chat_id, last_summary_id, current_message_id)
-        info.update(gen_result)
+        data = await _generate_and_send_summary(chat_id, last_summary_id, current_message_id)
+        if data:
+            info["sent"] = True
+            info["data"] = data
+        else:
+            info["reason"] = "no_messages"
         
     except Exception as e:
         info["reason"] = "error"
@@ -235,18 +234,17 @@ async def handle_message(message: Message):
         await save_message({
             "chat_id": message.chat.id,
             "message_id": message.message_id,
-            "sender_id": message.from_user.id if message.from_user else None,
             "sender_name": get_sender_name(message),
             "text": get_message_text(message),
             "reply_to_message_id": message.reply_to_message.message_id if message.reply_to_message else None,
-            "timestamp": message.date.isoformat() if message.date else None,
+            "forward_sender_name": get_forward_sender_name(message),
             "raw": raw_message,
             "attachment": attachment,
         })
         
         summary_info = await maybe_generate_summary(message.message_id, message.chat.id)
         if summary_info.get("sent"):
-            await save_summary(summary_info)
+            await save_summary(summary_info["data"])
         
     except Exception as e:
         context["error"] = str(e)

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from dataclasses import asdict, dataclass
 from typing import TypedDict
 
 from surrealdb import AsyncSurreal
@@ -111,44 +112,18 @@ async def set_last_summary_id(chat_id: int, message_id: int):
 class MessageData(TypedDict):
     chat_id: int
     message_id: int
-    sender_id: int | None
     sender_name: str
     text: str
     reply_to_message_id: int | None
-    timestamp: str | None
+    forward_sender_name: str | None
     raw: dict
     attachment: dict | None
 
 
-class SummaryData(TypedDict):
-    chat_id: int
-    from_message_id: int
-    to_message_id: int
-    timing_ms: float
-    text: str
-    model: str
-    input_tokens: int | None
-    output_tokens: int | None
-    cost: float | None
-
-
 @timed
 async def save_message(data: MessageData):
-    """Сохраняет сообщение в БД.
-    
-    Описание вложения берётся из attachment["description"] (если есть).
-    Для обратной совместимости дублируется в legacy-поля photo_description и т.д.
-    """
-    record = dict(data)
-    # Временно: дублируем описание в legacy-поля для обратной совместимости
-    if attachment := record.get("attachment"):
-        if desc := attachment.get("description"):
-            legacy_field = {"photo": "photo_description",
-                            "sticker": "sticker_description",
-                            "video_note": "video_note_description"}.get(attachment["type"])
-            if legacy_field:
-                record[legacy_field] = desc
-    await db.create("message", record)
+    """Сохраняет сообщение в БД."""
+    await db.create("message", dict(data))
 
 
 @timed
@@ -176,11 +151,26 @@ async def get_sticker(file_unique_id: str) -> str | None:
     return None
 
 
+@dataclass
+class SummaryData:
+    chat_id: int
+    from_message_id: int
+    to_message_id: int
+    messages_count: int
+    text: str
+    model: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    cost: float | None = None
+    timing_ms: float | None = None
+
+
 @timed
 async def save_summary(data: SummaryData):
     """Сохраняет сгенерированное саммари в БД."""
     from datetime import datetime, timezone
-    record = {**data, "created_at": datetime.now(timezone.utc).isoformat()}
+    record = asdict(data)
+    record["created_at"] = datetime.now(timezone.utc).isoformat()
     await db.create("summary", record)
 
 

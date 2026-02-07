@@ -92,41 +92,32 @@ def get_message_text(message: Message) -> str:
     return ""
 
 
+_ATTACHMENT_TYPES = {
+    "photo", "voice", "video_note", "sticker", "video",
+    "animation", "document", "poll", "location", "new_chat_members",
+}
+
+
 def get_attachment_info(message: Message) -> dict | None:
-    """Возвращает информацию о вложении сообщения.
-    
-    Returns:
-        dict с ключами:
-            - type: тип вложения (photo, voice, video_note, sticker, video, document, animation, poll, location)
-            - emoji: эмодзи стикера (только для sticker)
-            - file_name: имя файла (только для document)
-            - question: вопрос опроса (только для poll)
-            - options: варианты ответа (только для poll)
-        или None если вложения нет
-    """
-    if message.photo:
-        return {"type": "photo"}
-    if message.voice:
-        return {"type": "voice"}
-    if message.video_note:
-        return {"type": "video_note", "duration": message.video_note.duration}
-    if message.sticker:
-        return {"type": "sticker", "emoji": message.sticker.emoji or ""}
-    if message.video:
-        return {"type": "video"}
-    if message.animation:
-        return {"type": "animation"}
-    if message.document:
-        return {"type": "document", "file_name": message.document.file_name or "файл"}
-    if message.poll:
-        options = [opt.text for opt in message.poll.options]
-        return {"type": "poll", "question": message.poll.question, "options": options}
-    if message.location:
-        return {"type": "location"}
-    if message.new_chat_members:
-        names = ", ".join(m.full_name for m in message.new_chat_members)
-        return {"type": "new_members", "names": names}
-    return None
+    """Возвращает информацию о вложении сообщения (тип + доп. поля), или None."""
+    ct = message.content_type
+    if ct not in _ATTACHMENT_TYPES:
+        return None
+
+    info: dict = {"type": ct}
+
+    if ct == "sticker" and message.sticker:
+        info["emoji"] = message.sticker.emoji or ""
+    elif ct == "document" and message.document:
+        info["file_name"] = message.document.file_name or ""
+    elif ct == "poll" and message.poll:
+        info["question"] = message.poll.question
+        info["options"] = [opt.text for opt in message.poll.options]
+    elif ct == "new_chat_members" and message.new_chat_members:
+        info["type"] = "new_members"
+        info["names"] = ", ".join(m.full_name for m in message.new_chat_members)
+
+    return info
 
 
 def get_sender_name(message: Message) -> str:
@@ -134,6 +125,17 @@ def get_sender_name(message: Message) -> str:
     if message.from_user and message.from_user.full_name:
         return message.from_user.full_name
     return "Service"
+
+
+def get_forward_sender_name(message: Message) -> str | None:
+    """Извлекает имя отправителя оригинального сообщения для форвардов"""
+    if message.forward_from:
+        return message.forward_from.full_name or None
+    if message.forward_sender_name:
+        return message.forward_sender_name
+    if message.forward_from_chat:
+        return message.forward_from_chat.title
+    return None
 
 
 def fix_html(text: str) -> str:
@@ -152,7 +154,10 @@ def fix_html(text: str) -> str:
 
 
 def _json_default(obj):
-    """Fallback-сериализатор для json.dumps: превращает неизвестные типы в строку."""
+    """Fallback-сериализатор для json.dumps."""
+    from dataclasses import asdict
+    if hasattr(obj, '__dataclass_fields__'):
+        return asdict(obj)
     return repr(obj)
 
 

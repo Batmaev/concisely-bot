@@ -37,25 +37,6 @@ openai_client = AsyncOpenAI(
 )
 
 
-def _get_forward_sender_name(raw: dict) -> str | None:
-    """Извлекает имя отправителя оригинального сообщения."""
-    # Вариант 1: forward_from (пользователь с открытым профилем)
-    if forward_from := raw.get("forward_from"):
-        first = forward_from.get("first_name", "")
-        last = forward_from.get("last_name", "")
-        return f"{first} {last}".strip() or None
-    
-    # Вариант 2: forward_sender_name (пользователь со скрытым профилем)
-    if forward_sender_name := raw.get("forward_sender_name"):
-        return forward_sender_name
-    
-    # Вариант 3: forward_from_chat (форвард из канала)
-    if forward_from_chat := raw.get("forward_from_chat"):
-        return forward_from_chat.get("title")
-    
-    return None
-
-
 def _indent(text: str) -> str:
     return "\n".join(f"  {line}" for line in text.split("\n"))
 
@@ -119,14 +100,11 @@ def _format_attachment_block(attachment: dict | None, description: str | None = 
 
 
 def _get_attachment_description(msg_data: dict) -> str | None:
-    """Извлекает описание вложения: новый формат (attachment.description) или legacy-поля."""
+    """Извлекает описание вложения из attachment.description."""
     attachment = msg_data.get("attachment")
-    if attachment and (desc := attachment.get("description")):
-        return desc
-    # Фолбек на старый формат
-    return (msg_data.get("photo_description")
-            or msg_data.get("sticker_description")
-            or msg_data.get("video_note_description"))
+    if attachment:
+        return attachment.get("description")
+    return None
 
 
 def format_message_for_prompt(msg_data: dict) -> str:
@@ -135,11 +113,8 @@ def format_message_for_prompt(msg_data: dict) -> str:
     name = msg_data["sender_name"]
     text = msg_data.get("text", "")
     reply_to = msg_data.get("reply_to_message_id")
-    raw = msg_data.get("raw", {})
     attachment = msg_data.get("attachment")
-    
-    # Проверяем, есть ли информация о форварде
-    forward_name = _get_forward_sender_name(raw) if raw else None
+    forward_name = msg_data.get("forward_sender_name")
     
     # Формируем метки
     labels = []
