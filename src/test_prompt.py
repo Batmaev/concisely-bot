@@ -13,7 +13,7 @@ import asyncio
 import sys
 
 from .config import SYSTEM_PROMPT
-from .db import db, get_messages_for_summary
+from .db import db, get_messages
 from .llm import generate_full_prompt
 
 DEFAULT_CHAT_ID = -1001829561306
@@ -47,7 +47,7 @@ async def main():
     try:
         # Если указан диапазон - используем его, иначе берём последние N сообщений
         if args.from_id is not None and args.to_id is not None:
-            messages = await get_messages_for_summary(args.chat_id, args.from_id, args.to_id)
+            messages = await get_messages(args.chat_id, args.from_id, args.to_id)
             range_info = f"from_id={args.from_id}, to_id={args.to_id}"
         else:
             messages = await get_last_messages(args.chat_id, args.limit)

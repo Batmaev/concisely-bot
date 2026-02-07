@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from typing import TypedDict
 
 from surrealdb import AsyncSurreal
 
@@ -10,6 +11,7 @@ from .config import (
     SURREALDB_URL,
     SURREALDB_USER,
 )
+from .utils import tracked
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +87,8 @@ async def init_db():
     logger.info("База данных инициализирована")
 
 
-async def get_last_summary_message_id(chat_id: int) -> int | None:
+@tracked
+async def get_last_summary_id(chat_id: int) -> int | None:
     """Получает ID последнего саммаризованного сообщения для чата."""
     rows = await db.fetch(
         "SELECT last_summary_message_id FROM chat_state WHERE chat_id = $chat_id LIMIT 1",
@@ -96,7 +99,8 @@ async def get_last_summary_message_id(chat_id: int) -> int | None:
     return None
 
 
-async def set_last_summary_message_id(chat_id: int, message_id: int):
+@tracked
+async def set_last_summary_id(chat_id: int, message_id: int):
     """Устанавливает ID последнего саммаризованного сообщения для чата."""
     await db.query(
         "UPSERT chat_state SET chat_id = $chat_id, last_summary_message_id = $message_id WHERE chat_id = $chat_id",
@@ -104,38 +108,51 @@ async def set_last_summary_message_id(chat_id: int, message_id: int):
     )
 
 
-async def save_message(chat_id: int, message_id: int, sender_id: int | None, 
-                       sender_name: str, text: str, reply_to_message_id: int | None, 
-                       timestamp: str | None, raw: dict, attachment: dict | None = None):
+class MessageData(TypedDict):
+    chat_id: int
+    message_id: int
+    sender_id: int | None
+    sender_name: str
+    text: str
+    reply_to_message_id: int | None
+    timestamp: str | None
+    raw: dict
+    attachment: dict | None
+
+
+class SummaryData(TypedDict):
+    chat_id: int
+    from_message_id: int
+    to_message_id: int
+    timing_ms: float
+    text: str
+    model: str
+    input_tokens: int | None
+    output_tokens: int | None
+    cost: float | None
+
+
+@tracked
+async def save_message(data: MessageData):
     """Сохраняет сообщение в БД.
     
     Описание вложения берётся из attachment["description"] (если есть).
     Для обратной совместимости дублируется в legacy-поля photo_description и т.д.
     """
-    record_id = f"message:{chat_id}_{message_id}"
-    data = {
-        "message_id": message_id,
-        "chat_id": chat_id,
-        "sender_id": sender_id,
-        "sender_name": sender_name,
-        "text": text,
-        "reply_to_message_id": reply_to_message_id,
-        "timestamp": timestamp,
-        "raw": raw,
-    }
-    if attachment:
-        data["attachment"] = attachment
-        # Временно: дублируем описание в legacy-поля для обратной совместимости
+    record = dict(data)
+    # Временно: дублируем описание в legacy-поля для обратной совместимости
+    if attachment := record.get("attachment"):
         if desc := attachment.get("description"):
             legacy_field = {"photo": "photo_description",
                             "sticker": "sticker_description",
                             "video_note": "video_note_description"}.get(attachment["type"])
             if legacy_field:
-                data[legacy_field] = desc
-    await db.create(record_id, data)
+                record[legacy_field] = desc
+    await db.create("message", record)
 
 
-async def get_messages_for_summary(chat_id: int, from_id: int, to_id: int) -> list[dict]:
+@tracked
+async def get_messages(chat_id: int, from_id: int, to_id: int) -> list[dict]:
     """Получает сообщения для саммаризации."""
     return await db.fetch(
         """
@@ -147,7 +164,8 @@ async def get_messages_for_summary(chat_id: int, from_id: int, to_id: int) -> li
     )
 
 
-async def get_sticker_description(file_unique_id: str) -> str | None:
+@tracked
+async def get_sticker(file_unique_id: str) -> str | None:
     """Получает описание стикера из кэша."""
     rows = await db.fetch(
         "SELECT description FROM sticker_cache WHERE file_unique_id = $file_unique_id LIMIT 1",
@@ -158,31 +176,18 @@ async def get_sticker_description(file_unique_id: str) -> str | None:
     return None
 
 
-async def save_summary(chat_id: int, from_message_id: int, to_message_id: int,
-                       model: str, duration_ms: float, summary_text: str,
-                       input_tokens: int | None = None, output_tokens: int | None = None,
-                       cost: float | None = None):
+@tracked
+async def save_summary(data: SummaryData):
     """Сохраняет сгенерированное саммари в БД."""
     from datetime import datetime, timezone
-    data = {
-        "chat_id": chat_id,
-        "from_message_id": from_message_id,
-        "to_message_id": to_message_id,
-        "model": model,
-        "duration_ms": duration_ms,
-        "summary_text": summary_text,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
-        "cost": cost,
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    }
-    await db.create("summary", data)
+    record = {**data, "created_at": datetime.now(timezone.utc).isoformat()}
+    await db.create("summary", record)
 
 
-async def save_sticker_description(file_unique_id: str, description: str):
+@tracked
+async def save_sticker(file_unique_id: str, description: str):
     """Сохраняет описание стикера в кэш."""
-    record_id = f"sticker_cache:{file_unique_id}"
-    await db.create(record_id, {
+    await db.create("sticker_cache", {
         "file_unique_id": file_unique_id,
         "description": description,
     })

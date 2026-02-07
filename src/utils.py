@@ -1,9 +1,56 @@
+import contextvars
+import functools
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 from aiogram.types import Message
 from bs4 import BeautifulSoup
+
+log_context: contextvars.ContextVar[dict | None] = contextvars.ContextVar('log_context', default=None)
+
+
+def tracked(fn_or_key=None):
+    """Декоратор: замеряет время async-функции и пишет в текущий лог-контекст.
+    
+    Использование:
+        @tracked              — ключ = имя функции
+        @tracked("my_key")    — ключ задан явно
+    
+    - Всегда записывает timings[key] (мс).
+    - Если результат — dict, добавляет timing_ms и сохраняет в context[key].
+    - Если лог-контекст не установлен — просто вызывает функцию.
+    """
+    def _wrap(fn, key):
+        @functools.wraps(fn)
+        async def wrapper(*args, **kwargs):
+            ctx = log_context.get()
+            if ctx is None:
+                return await fn(*args, **kwargs)
+            
+            timings = ctx.setdefault("timings", {})
+            start = time.perf_counter()
+            try:
+                result = await fn(*args, **kwargs)
+            finally:
+                timings[key] = round((time.perf_counter() - start) * 1000, 2)
+            
+            if isinstance(result, dict):
+                result["timing_ms"] = timings[key]
+                ctx[key] = result
+            
+            return result
+        return wrapper
+    
+    if callable(fn_or_key):
+        # @tracked без аргументов
+        return _wrap(fn_or_key, fn_or_key.__name__)
+    
+    # @tracked("key")
+    def decorator(fn):
+        return _wrap(fn, fn_or_key or fn.__name__)
+    return decorator
 
 
 def get_message_text(message: Message) -> str:
@@ -34,15 +81,7 @@ def get_attachment_info(message: Message) -> dict | None:
     if message.video_note:
         return {"type": "video_note", "duration": message.video_note.duration}
     if message.sticker:
-        return {
-            "type": "sticker",
-            "emoji": message.sticker.emoji or "",
-            "file_id": message.sticker.file_id,
-            "file_unique_id": message.sticker.file_unique_id,
-            "is_animated": message.sticker.is_animated,
-            "is_video": message.sticker.is_video,
-            "thumbnail_file_id": message.sticker.thumbnail.file_id if message.sticker.thumbnail else None,
-        }
+        return {"type": "sticker", "emoji": message.sticker.emoji or ""}
     if message.video:
         return {"type": "video"}
     if message.animation:

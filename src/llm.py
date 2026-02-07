@@ -156,6 +156,52 @@ class SummaryResult:
     cost: float | None = None
 
 
+def get_model_short_name(model: str) -> str:
+    """Извлекает короткое имя модели."""
+    # 'anthropic/claude-opus-4.5' -> 'claude-opus-4.5'
+    return model.split('/')[-1]
+
+
+def _extract_cost(response) -> float | None:
+    if usage := getattr(response, 'usage', None):
+        return getattr(usage, 'cost', None)
+    return None
+
+
+async def _call_vision(model: str, prompt: str, media_content: dict) -> DescribeResult:
+    """Общий вызов vision-модели."""
+    response = await openai_client.responses.create(
+        model=model,
+        input=[{
+            'role': 'user',
+            'content': [
+                {'type': 'input_text', 'text': prompt},
+                media_content,
+            ]
+        }]
+    )
+    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
+
+
+async def describe_image(base64_image: str) -> DescribeResult:
+    """Описывает изображение с помощью vision-модели."""
+    return await _call_vision(IMAGE_MODEL, 'Что изображено на картинке? Кратко',
+        {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'})
+
+
+async def describe_sticker(base64_image: str) -> DescribeResult:
+    """Описывает стикер с помощью vision-модели."""
+    return await _call_vision(IMAGE_MODEL,
+        'Очень кратко опиши стикер. Если стикер представляет собой скриншот сообщения, ответь в формате "Имя:\\nтекст сообщения"',
+        {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'})
+
+
+async def describe_video_note(base64_video: str) -> DescribeResult:
+    """Описывает видеосообщение с помощью vision-модели."""
+    return await _call_vision(VIDEO_MODEL, 'Что происходит / какие слова говорятся в видеосообщении?',
+        {'type': 'input_video', 'video_url': f'data:video/mp4;base64,{base64_video}'})
+
+
 async def generate_summary(messages: list[dict]) -> SummaryResult:
     """Генерирует саммари с помощью OpenRouter."""
     model = random.choice(MODELS)
@@ -174,60 +220,3 @@ async def generate_summary(messages: list[dict]) -> SummaryResult:
         result.output_tokens = getattr(usage, 'output_tokens', None)
     
     return result
-
-
-def get_model_short_name(model: str) -> str:
-    """Извлекает короткое имя модели."""
-    # 'anthropic/claude-opus-4.5' -> 'claude-opus-4.5'
-    return model.split('/')[-1]
-
-
-def _extract_cost(response) -> float | None:
-    if usage := getattr(response, 'usage', None):
-        return getattr(usage, 'cost', None)
-    return None
-
-
-async def describe_image(base64_image: str) -> DescribeResult:
-    """Описывает изображение с помощью vision-модели."""
-    response = await openai_client.responses.create(
-        model=IMAGE_MODEL,
-        input=[{
-            'role': 'user',
-            'content': [
-                {'type': 'input_text', 'text': 'Что изображено на картинке? Кратко'},
-                {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'}
-            ]
-        }]
-    )
-    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
-
-
-async def describe_sticker(base64_image: str) -> DescribeResult:
-    """Описывает стикер с помощью vision-модели."""
-    response = await openai_client.responses.create(
-        model=IMAGE_MODEL,
-        input=[{
-            'role': 'user',
-            'content': [
-                {'type': 'input_text', 'text': 'Очень кратко опиши стикер. Если стикер представляет собой скриншот сообщения, ответь в формате "Имя:\\nтекст сообщения"'},
-                {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'}
-            ]
-        }]
-    )
-    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
-
-
-async def describe_video_note(base64_video: str) -> DescribeResult:
-    """Описывает видеосообщение с помощью vision-модели."""
-    response = await openai_client.responses.create(
-        model=VIDEO_MODEL,
-        input=[{
-            'role': 'user',
-            'content': [
-                {'type': 'input_text', 'text': 'Что происходит / какие слова говорятся в видеосообщении?'},
-                {'type': 'input_video', 'video_url': f'data:video/mp4;base64,{base64_video}'}
-            ]
-        }]
-    )
-    return DescribeResult(text=response.output_text, cost=_extract_cost(response))
