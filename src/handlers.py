@@ -221,7 +221,9 @@ async def handle_message(message: Message):
     start = time.perf_counter()
     try:
         attachment = get_attachment_info(message)
-        raw_message = message.model_dump(mode="json", exclude_none=True)
+        raw_message = message.model_dump(
+            mode="json", exclude_none=True, exclude_unset=True, exclude_defaults=True,
+        )
         context["request_id"] = f"{message.chat.id}:{message.message_id}"
         context["message"] = raw_message
         

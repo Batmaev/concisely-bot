@@ -151,6 +151,11 @@ def fix_html(text: str) -> str:
     return str(soup)
 
 
+def _json_default(obj):
+    """Fallback-сериализатор для json.dumps: превращает неизвестные типы в строку."""
+    return repr(obj)
+
+
 def append_wide_log(context: dict, base_dir: str):
     """Добавляет один JSON-лог на запрос."""
     file_name = f"{datetime.now().date().isoformat()}.jsonl"
@@ -163,5 +168,5 @@ def append_wide_log(context: dict, base_dir: str):
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
     with open(path, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record, ensure_ascii=False))
+        handle.write(json.dumps(record, ensure_ascii=False, default=_json_default))
         handle.write("\n")
