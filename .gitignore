@@ -4,5 +4,6 @@ data
 logs
 test
 .env
+src/chats.json
 .DS_Store
 __pycache__

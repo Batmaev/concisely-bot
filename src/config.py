@@ -1,4 +1,6 @@
+import json
 import os
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -14,13 +16,13 @@ SURREALDB_PASSWORD = os.getenv("SURREALDB_PASSWORD", "root")
 SURREALDB_NAMESPACE = os.getenv("SURREALDB_NAMESPACE", "concisely")
 SURREALDB_DATABASE = os.getenv("SURREALDB_DATABASE", "messages")
 
-SUMMARY_INTERVAL = int(os.getenv("SUMMARY_INTERVAL", "7"))
-SUMMARY_INTERVALS = {
-    -1001829561306: 500,
-    -1002215041522: 7,
-}
-CHAT_IDS = sorted(SUMMARY_INTERVALS.keys())
-WIDE_LOG_DIR = os.getenv("WIDE_LOG_DIR", "logs")
+_chats_path = Path(__file__).resolve().parent / "chats.json"
+with open(_chats_path) as f:
+    SUMMARY_INTERVALS = {int(k): v or 500 for k, v in json.load(f).items()}
+
+CHAT_IDS = frozenset(SUMMARY_INTERVALS)
+
+WIDE_LOG_DIR = "logs"
 
 # Модели с весами
 MODELS = [
