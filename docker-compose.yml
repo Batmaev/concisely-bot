@@ -2,7 +2,6 @@ services:
   surrealdb:
     image: surrealdb/surrealdb:v2
     container_name: concisely-surrealdb
-    user: "65532:65532"
     command: start rocksdb:///data -u root -p root
     volumes:
       - ./data:/data
