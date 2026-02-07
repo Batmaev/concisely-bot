@@ -22,17 +22,15 @@ SUMMARY_INTERVALS = {
 CHAT_IDS = sorted(SUMMARY_INTERVALS.keys())
 WIDE_LOG_DIR = os.getenv("WIDE_LOG_DIR", "logs")
 
-# Модели с весами (4/9 для Opus, 1/9 для остальных)
+# Модели с весами
 MODELS = [
-    'anthropic/claude-opus-4.5',
-    'anthropic/claude-opus-4.5',
-    'anthropic/claude-opus-4.5',
+    'anthropic/claude-opus-4.6',
     'anthropic/claude-opus-4.5',
     'anthropic/claude-sonnet-4.5',
-    'google/gemini-2.5-pro',
+
     'google/gemini-3-pro-preview',
-    'openai/gpt-5.2',
-    'x-ai/grok-4.1-fast',
+    'google/gemini-2.5-pro',
+    'google/gemini-3-flash-preview',
 ]
 
 IMAGE_MODEL = 'google/gemini-3-flash-preview'
