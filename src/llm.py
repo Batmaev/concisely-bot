@@ -1,10 +1,9 @@
+import asyncio
 import base64
 import random
 from dataclasses import dataclass
-from io import BytesIO
 
 from openai import AsyncOpenAI
-from pydub import AudioSegment
 
 from .config import OPENROUTER_API_KEY, MODELS, IMAGE_MODEL, VIDEO_MODEL, VOICE_MODEL
 from .utils import timed
@@ -227,11 +226,17 @@ async def describe_video_note(base64_video: str) -> DescribeResult:
 
 @timed
 async def convert_ogg_to_mp3(audio_bytes: bytes) -> bytes:
-    """Конвертирует OGG-аудио в MP3."""
-    audio = AudioSegment.from_ogg(BytesIO(audio_bytes))
-    mp3_buffer = BytesIO()
-    audio.export(mp3_buffer, format='mp3')
-    return mp3_buffer.getvalue()
+    """Конвертирует OGG-аудио в MP3 через ffmpeg."""
+    proc = await asyncio.create_subprocess_exec(
+        'ffmpeg', '-loglevel', 'error', '-i', 'pipe:0', '-f', 'mp3', 'pipe:1',
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate(audio_bytes)
+    if proc.returncode != 0:
+        raise RuntimeError(f"ffmpeg error: {stderr.decode()}")
+    return stdout
 
 
 async def describe_voice(audio_bytes: bytes) -> DescribeResult:

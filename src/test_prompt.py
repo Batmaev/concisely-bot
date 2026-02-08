@@ -2,10 +2,10 @@
 """CLI утилита для тестирования генерации промпта из живой БД.
 
 Использование:
-    uv run -m src.test_prompt                      # последние 100 сообщений из дефолтного чата
-    uv run -m src.test_prompt --limit 50           # последние 50 сообщений
-    uv run -m src.test_prompt --from-id 220 --to-id 240  # конкретный диапазон
-    uv run -m src.test_prompt --output prompt.txt        # вывод в файл
+    uv run --no-sync -m src.test_prompt            # последние 100 сообщений из дефолтного чата
+    uv run --no-sync -m src.test_prompt --limit 50                 # последние 50 сообщений
+    uv run --no-sync -m src.test_prompt --from-id 220 --to-id 240  # конкретный диапазон
+    uv run --no-sync -m src.test_prompt --output prompt.txt        # вывод в файл
 """
 
 import argparse
