@@ -41,7 +41,6 @@ def _indent(text: str) -> str:
 
 
 def _format_attachment_block(attachment: dict | None, description: str | None = None) -> str | None:
-    """Форматирует блок вложения для промпта."""
     if not attachment:
         return None
     
@@ -99,7 +98,6 @@ def _format_attachment_block(attachment: dict | None, description: str | None = 
 
 
 def _get_attachment_description(msg_data: dict) -> str | None:
-    """Извлекает описание вложения из attachment.description."""
     attachment = msg_data.get("attachment")
     if attachment:
         return attachment.get("description")
@@ -107,7 +105,6 @@ def _get_attachment_description(msg_data: dict) -> str | None:
 
 
 def format_message_for_prompt(msg_data: dict) -> str:
-    """Форматирует сообщение для промпта."""
     msg_id = msg_data["message_id"]
     name = msg_data["sender_name"]
     text = msg_data.get("text", "")
@@ -115,7 +112,6 @@ def format_message_for_prompt(msg_data: dict) -> str:
     attachment = msg_data.get("attachment")
     forward_name = msg_data.get("forward_sender_name")
     
-    # Формируем метки
     labels = []
     if reply_to:
         labels.append(f"reply to {reply_to}")
@@ -124,7 +120,6 @@ def format_message_for_prompt(msg_data: dict) -> str:
     
     labels_str = f" [{', '.join(labels)}]" if labels else ""
     
-    # Собираем части сообщения
     parts = [f"### {msg_id} {name}{labels_str}"]
     
     if text:
@@ -138,7 +133,6 @@ def format_message_for_prompt(msg_data: dict) -> str:
 
 
 def generate_full_prompt(messages: list[dict]) -> str:
-    """Генерирует полный промпт для LLM из списка сообщений."""
     messages_text = "\n\n".join(format_message_for_prompt(m) for m in messages)
     return SUMMARIZATION_PROMPT + f"\n\n<messages>\n{messages_text}\n</messages>"
 
@@ -153,7 +147,6 @@ class SummaryResult:
 
 
 async def generate_summary(messages: list[dict]) -> SummaryResult:
-    """Генерирует саммари с помощью OpenRouter."""
     model = random.choice(MODELS)
     prompt = generate_full_prompt(messages)
     
@@ -179,7 +172,6 @@ class DescribeResult:
 
 
 def get_model_short_name(model: str) -> str:
-    """Извлекает короткое имя модели."""
     # 'anthropic/claude-opus-4.5' -> 'claude-opus-4.5'
     return model.split('/')[-1]
 
@@ -191,7 +183,6 @@ def extract_cost(response) -> float | None:
 
 
 async def call_multimodal(model: str, prompt: str, media_content: dict) -> DescribeResult:
-    """Общий вызов мультимодальной модели (vision / audio)."""
     response = await openai_client.responses.create(
         model=model,
         input=[{
@@ -206,27 +197,23 @@ async def call_multimodal(model: str, prompt: str, media_content: dict) -> Descr
 
 
 async def describe_image(base64_image: str) -> DescribeResult:
-    """Описывает изображение с помощью vision-модели."""
     return await call_multimodal(IMAGE_MODEL, 'Что изображено на картинке? Кратко',
         {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'})
 
 
 async def describe_sticker(base64_image: str) -> DescribeResult:
-    """Описывает стикер с помощью vision-модели."""
     return await call_multimodal(IMAGE_MODEL,
         'Очень кратко опиши стикер. Если стикер представляет собой скриншот сообщения, ответь в формате "Имя:\\nтекст сообщения"',
         {'type': 'input_image', 'image_url': f'data:image/jpeg;base64,{base64_image}'})
 
 
 async def describe_video_note(base64_video: str) -> DescribeResult:
-    """Описывает видеосообщение с помощью vision-модели."""
     return await call_multimodal(VIDEO_MODEL, 'Что происходит / какие слова говорятся в видеосообщении?',
         {'type': 'input_video', 'video_url': f'data:video/mp4;base64,{base64_video}'})
 
 
 @timed
 async def convert_ogg_to_mp3(audio_bytes: bytes) -> bytes:
-    """Конвертирует OGG-аудио в MP3 через ffmpeg."""
     proc = await asyncio.create_subprocess_exec(
         'ffmpeg', '-loglevel', 'error', '-i', 'pipe:0', '-f', 'mp3', 'pipe:1',
         stdin=asyncio.subprocess.PIPE,
@@ -240,7 +227,7 @@ async def convert_ogg_to_mp3(audio_bytes: bytes) -> bytes:
 
 
 async def describe_voice(audio_bytes: bytes) -> DescribeResult:
-    """Расшифровывает голосовое сообщение (ogg). Конвертирует в mp3 для Responses API."""
+    """Конвертирует ogg в mp3 — Responses API не принимает ogg."""
     mp3_bytes = await convert_ogg_to_mp3(audio_bytes)
     base64_audio = base64.b64encode(mp3_bytes).decode()
 

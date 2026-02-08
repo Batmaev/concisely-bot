@@ -1,6 +1,5 @@
 import asyncio
 import logging
-from dataclasses import asdict, dataclass
 from typing import TypedDict
 
 from surrealdb import AsyncSurreal
@@ -76,7 +75,6 @@ db = Database()
 
 
 async def init_db():
-    """Инициализирует структуру БД."""
     await db.query("DEFINE TABLE IF NOT EXISTS message SCHEMALESS;")
     await db.query("DEFINE INDEX IF NOT EXISTS chat_message_idx ON TABLE message COLUMNS chat_id, message_id UNIQUE;")
     await db.query("DEFINE TABLE IF NOT EXISTS chat_state SCHEMALESS;")
@@ -90,7 +88,6 @@ async def init_db():
 
 @timed
 async def get_last_summary_id(chat_id: int) -> int | None:
-    """Получает ID последнего саммаризованного сообщения для чата."""
     rows = await db.fetch(
         "SELECT last_summary_message_id FROM chat_state WHERE chat_id = $chat_id LIMIT 1",
         {"chat_id": chat_id}
@@ -102,7 +99,6 @@ async def get_last_summary_id(chat_id: int) -> int | None:
 
 @timed
 async def set_last_summary_id(chat_id: int, message_id: int):
-    """Устанавливает ID последнего саммаризованного сообщения для чата."""
     await db.query(
         "UPSERT chat_state SET chat_id = $chat_id, last_summary_message_id = $message_id WHERE chat_id = $chat_id",
         {"chat_id": chat_id, "message_id": message_id}
@@ -122,13 +118,11 @@ class MessageData(TypedDict):
 
 @timed
 async def save_message(data: MessageData):
-    """Сохраняет сообщение в БД."""
     await db.create("message", dict(data))
 
 
 @timed
 async def get_messages(chat_id: int, from_id: int, to_id: int) -> list[dict]:
-    """Получает сообщения для саммаризации."""
     return await db.fetch(
         """
         SELECT * FROM message 
@@ -141,7 +135,6 @@ async def get_messages(chat_id: int, from_id: int, to_id: int) -> list[dict]:
 
 @timed
 async def get_sticker(file_unique_id: str) -> str | None:
-    """Получает описание стикера из кэша."""
     rows = await db.fetch(
         "SELECT description FROM sticker_cache WHERE file_unique_id = $file_unique_id LIMIT 1",
         {"file_unique_id": file_unique_id}
@@ -151,32 +144,26 @@ async def get_sticker(file_unique_id: str) -> str | None:
     return None
 
 
-@dataclass
-class SummaryData:
+class SummaryData(TypedDict, total=False):
     chat_id: int
     from_message_id: int
     to_message_id: int
-    messages_count: int
     text: str
     model: str
-    input_tokens: int | None = None
-    output_tokens: int | None = None
-    cost: float | None = None
-    timing_ms: float | None = None
+    input_tokens: int | None
+    output_tokens: int | None
+    cost: float | None
+    timing_ms: float | None
 
 
 @timed
 async def save_summary(data: SummaryData):
-    """Сохраняет сгенерированное саммари в БД."""
     from datetime import datetime, timezone
-    record = asdict(data)
-    record["created_at"] = datetime.now(timezone.utc).isoformat()
-    await db.create("summary", record)
+    await db.create("summary", {**data, "created_at": datetime.now(timezone.utc).isoformat()})
 
 
 @timed
 async def save_sticker(file_unique_id: str, description: str):
-    """Сохраняет описание стикера в кэш."""
     await db.create("sticker_cache", {
         "file_unique_id": file_unique_id,
         "description": description,

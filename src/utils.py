@@ -35,9 +35,13 @@ def timed(fn_or_key=None):
             timings = ctx.setdefault("timings", {})
             start = time.perf_counter()
             try:
-                return await fn(*args, **kwargs)
+                result = await fn(*args, **kwargs)
             finally:
-                timings[key] = round((time.perf_counter() - start) * 1000, 2)
+                elapsed = round((time.perf_counter() - start) * 1000, 2)
+                timings[key] = elapsed
+            if isinstance(result, dict):
+                result["timing_ms"] = elapsed
+            return result
         return wrapper
 
     if callable(fn_or_key):
@@ -50,8 +54,6 @@ def timed(fn_or_key=None):
 
 def logged(fn_or_key=None):
     """Декоратор: сохраняет dict-результат async-функции в context[key].
-
-    Если в timings[key] уже есть время (от @timed) — добавляет timing_ms в результат.
 
     Использование:
         @logged              — ключ = имя функции
@@ -67,9 +69,6 @@ def logged(fn_or_key=None):
             result = await fn(*args, **kwargs)
 
             if isinstance(result, dict):
-                timing = ctx.get("timings", {}).get(key)
-                if timing is not None:
-                    result["timing_ms"] = timing
                 ctx[key] = result
 
             return result
@@ -84,7 +83,6 @@ def logged(fn_or_key=None):
 
 
 def get_message_text(message: Message) -> str:
-    """Извлекает текст/caption из сообщения."""
     if message.text:
         return message.text
     if message.caption:
@@ -99,7 +97,6 @@ _ATTACHMENT_TYPES = {
 
 
 def get_attachment_info(message: Message) -> dict | None:
-    """Возвращает информацию о вложении сообщения (тип + доп. поля), или None."""
     ct = message.content_type
     if ct not in _ATTACHMENT_TYPES:
         return None
@@ -121,14 +118,12 @@ def get_attachment_info(message: Message) -> dict | None:
 
 
 def get_sender_name(message: Message) -> str:
-    """Получает имя отправителя сообщения."""
     if message.from_user and message.from_user.full_name:
         return message.from_user.full_name
     return "Service"
 
 
 def get_forward_sender_name(message: Message) -> str | None:
-    """Извлекает имя отправителя оригинального сообщения для форвардов"""
     if message.forward_from:
         return message.forward_from.full_name or None
     if message.forward_sender_name:
@@ -139,13 +134,11 @@ def get_forward_sender_name(message: Message) -> str | None:
 
 
 def fix_html(text: str) -> str:
-    """Исправляет незакрытые HTML-теги."""
-    # Разрешённые теги в Telegram
+    """Фиксит незакрытые теги и удаляет неподдерживаемые Telegram'ом."""
     allowed_tags = {'b', 'i', 'a', 'code', 'pre', 's', 'u'}
     
     soup = BeautifulSoup(text, 'html.parser')
     
-    # Удаляем запрещённые теги, оставляя их содержимое
     for tag in soup.find_all(True):
         if tag.name not in allowed_tags:
             tag.unwrap()
@@ -154,7 +147,6 @@ def fix_html(text: str) -> str:
 
 
 def _json_default(obj):
-    """Fallback-сериализатор для json.dumps."""
     from dataclasses import asdict
     if hasattr(obj, '__dataclass_fields__'):
         return asdict(obj)
@@ -162,7 +154,6 @@ def _json_default(obj):
 
 
 def append_wide_log(context: dict, base_dir: str):
-    """Добавляет один JSON-лог на запрос."""
     file_name = f"{datetime.now().date().isoformat()}.jsonl"
     path = os.path.join(base_dir, file_name)
     record = {

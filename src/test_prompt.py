@@ -20,7 +20,6 @@ DEFAULT_LIMIT = 100
 
 
 async def get_last_messages(chat_id: int, limit: int) -> list[dict]:
-    """Получает последние N сообщений из чата."""
     return await db.fetch(
         f"""
         SELECT * FROM message 
@@ -43,7 +42,6 @@ async def main():
     args = parser.parse_args()
     
     try:
-        # Если указан диапазон - используем его, иначе берём последние N сообщений
         if args.from_id is not None and args.to_id is not None:
             messages = await get_messages(args.chat_id, args.from_id, args.to_id)
             range_info = f"from_id={args.from_id}, to_id={args.to_id}"

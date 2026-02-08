@@ -33,13 +33,11 @@ bot = Bot(token=BOT_TOKEN)
 router = Router()
 
 
-# Lock для предотвращения одновременных генераций (per-chat)
 summary_locks: dict[int, asyncio.Lock] = {}
 generating_chats: set[int] = set()
 
 
 async def send_summary(chat_id: int, summary: str, model: str):
-    """Отправляет саммари в чат."""
     summary = summary[:3000]
     summary = fix_html(summary)
     
@@ -54,24 +52,18 @@ async def send_summary(chat_id: int, summary: str, model: str):
 
 
 class SummaryInfo(TypedDict, total=False):
-    """Результат maybe_generate_summary — данные для лога."""
-    # Статус
     attempted: bool
     sent: bool
     reason: str
     error: str
-    # Контекст
     last_summary_id: int | None
     messages_since_last: int
     interval: int
-    timing_ms: float
-    # Данные саммари (если sent)
     data: SummaryData
 
 
 @timed("summary")
 async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> SummaryData | None:
-    """Генерирует, отправляет и сохраняет саммари."""
     messages = await get_messages(chat_id, from_id, to_id)
     if not messages:
         return None
@@ -84,7 +76,6 @@ async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> 
         chat_id=chat_id,
         from_message_id=from_id,
         to_message_id=to_id,
-        messages_count=len(messages),
         text=result.text,
         model=result.model,
         input_tokens=result.input_tokens,
@@ -95,7 +86,6 @@ async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> 
 
 @logged("summary")
 async def maybe_generate_summary(current_message_id: int, chat_id: int) -> SummaryInfo:
-    """Проверяет, нужно ли генерировать саммари, и генерирует если нужно."""
     info: SummaryInfo = {"attempted": False, "sent": False}
     
     if chat_id in generating_chats:
@@ -147,7 +137,6 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> Summa
 
 
 async def _download_file_bytes(file_id: str) -> bytes:
-    """Скачивает файл из Telegram и возвращает сырые байты."""
     file = await bot.get_file(file_id)
     buffer = io.BytesIO()
     await bot.download_file(file.file_path, buffer)
@@ -156,7 +145,6 @@ async def _download_file_bytes(file_id: str) -> bytes:
 
 
 async def _download_file_base64(file_id: str) -> str:
-    """Скачивает файл из Telegram и возвращает base64."""
     raw = await _download_file_bytes(file_id)
     return base64.b64encode(raw).decode('utf-8')
 
@@ -169,7 +157,6 @@ class DescribeInfo(TypedDict):
 @logged
 @timed
 async def describe_attachment(message: Message, attachment: dict) -> DescribeInfo | None:
-    """Получает описание вложения от vision-модели."""
     att_type = attachment["type"]
     
     try:
@@ -213,7 +200,6 @@ async def describe_attachment(message: Message, attachment: dict) -> DescribeInf
 
 @router.message(F.chat.id.in_(CHAT_IDS))
 async def handle_message(message: Message):
-    """Обрабатывает все сообщения из отслеживаемых чатов."""
     context: dict = {"timings": {}}
     token = log_context.set(context)
     

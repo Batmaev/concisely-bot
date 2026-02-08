@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    """Главная функция запуска бота."""
     logger.info("Запуск бота...")
     
     await init_db()
