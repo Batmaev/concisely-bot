@@ -27,12 +27,14 @@ WIDE_LOG_DIR = "logs"
 # Модели с весами
 MODELS = [
     'anthropic/claude-opus-4.6',
-    'anthropic/claude-opus-4.5',
+    'anthropic/claude-opus-4.6',
     'anthropic/claude-sonnet-4.5',
 
     'google/gemini-3-pro-preview',
     'google/gemini-2.5-pro',
     'google/gemini-3-flash-preview',
+
+    'moonshotai/kimi-k2-thinking',
 ]
 
 IMAGE_MODEL = 'google/gemini-3-flash-preview'
