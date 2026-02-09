@@ -8,7 +8,7 @@ from typing import TypedDict
 
 from aiogram import Bot, F, Router
 from aiogram.types import Message
-from aiogram.enums import ParseMode
+from aiogram.enums import ChatAction, ParseMode
 
 from .config import BOT_TOKEN, CHAT_IDS, SUMMARY_INTERVALS, WIDE_LOG_DIR
 from .db import (
@@ -68,7 +68,21 @@ async def _generate_and_send_summary(chat_id: int, from_id: int, to_id: int) -> 
     if not messages:
         return None
     
-    result = await generate_summary(messages)
+    async def keep_typing():
+        try:
+            while True:
+                await bot.send_chat_action(chat_id, ChatAction.TYPING)
+                await asyncio.sleep(4)
+        except asyncio.CancelledError:
+            pass
+    
+    typing_task = asyncio.create_task(keep_typing())
+    try:
+        result = await generate_summary(messages)
+    finally:
+        typing_task.cancel()
+        await typing_task
+    
     await send_summary(chat_id, result.text, result.model)
     await set_last_summary_id(chat_id, to_id)
     
