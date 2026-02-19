@@ -28,13 +28,14 @@ WIDE_LOG_DIR = "logs"
 MODELS = [
     'anthropic/claude-opus-4.6',
     'anthropic/claude-opus-4.6',
-    'anthropic/claude-sonnet-4.5',
+    'anthropic/claude-sonnet-4.6',
 
     'google/gemini-3-pro-preview',
     'google/gemini-2.5-pro',
     'google/gemini-3-flash-preview',
 
-    'moonshotai/kimi-k2-thinking',
+    'moonshotai/kimi-k2.5',
+    'z-ai/glm-5',
 ]
 
 IMAGE_MODEL = 'google/gemini-3-flash-preview'
