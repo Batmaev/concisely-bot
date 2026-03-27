@@ -10,7 +10,7 @@ from aiogram import Bot, F, Router
 from aiogram.types import Message
 from aiogram.enums import ChatAction, ParseMode
 
-from .config import BOT_TOKEN, CHAT_IDS, SUMMARY_INTERVALS, WIDE_LOG_DIR
+from .config import BOT_TOKEN, CHAT_IDS, CHATS, WIDE_LOG_DIR
 from .db import (
     SummaryData,
     get_last_summary_id,
@@ -122,7 +122,7 @@ async def maybe_generate_summary(current_message_id: int, chat_id: int) -> Summa
             info["reason"] = "first_run"
             return info
         
-        interval = SUMMARY_INTERVALS[chat_id]
+        interval = CHATS[chat_id].interval
         if current_message_id - last_summary_id < interval:
             info["reason"] = "interval_not_reached"
             info["messages_since_last"] = current_message_id - last_summary_id
@@ -212,6 +212,19 @@ async def describe_attachment(message: Message, attachment: dict) -> DescribeInf
     return {"description": result.text, "cost": result.cost}
 
 
+def _chat_shift_id(chat_id: int) -> str:
+    return str(chat_id).replace("-100", "", 1)
+
+
+async def send_transcription(chat_id: int, message_id: int, text: str):
+    link = f"https://t.me/c/{_chat_shift_id(chat_id)}/{message_id}"
+    html = f'<blockquote expandable><a href="{link}">↑</a> {fix_html(text)}</blockquote>'
+    try:
+        await bot.send_message(chat_id, html, parse_mode=ParseMode.HTML)
+    except Exception as e:
+        log_warning(f"send_transcription: {e}")
+
+
 @router.message(F.chat.id.in_(CHAT_IDS))
 async def handle_message(message: Message):
     context: dict = {"timings": {}}
@@ -230,6 +243,11 @@ async def handle_message(message: Message):
             describe = await describe_attachment(message, attachment)
             if describe:
                 attachment.update(describe)
+                if (attachment["type"] in ("voice", "video_note")
+                        and CHATS[message.chat.id].transcribe):
+                    await send_transcription(
+                        message.chat.id, message.message_id, describe["description"],
+                    )
         
         await save_message({
             "chat_id": message.chat.id,

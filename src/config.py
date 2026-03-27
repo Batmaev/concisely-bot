@@ -1,5 +1,6 @@
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,11 +17,17 @@ SURREALDB_PASSWORD = os.getenv("SURREALDB_PASSWORD", "root")
 SURREALDB_NAMESPACE = os.getenv("SURREALDB_NAMESPACE", "concisely")
 SURREALDB_DATABASE = os.getenv("SURREALDB_DATABASE", "messages")
 
+@dataclass
+class ChatConfig:
+    interval: int = 500
+    transcribe: bool = False
+
+
 _chats_path = Path(__file__).resolve().parent / "chats.json"
 with open(_chats_path) as f:
-    SUMMARY_INTERVALS = {int(k): v or 500 for k, v in json.load(f).items()}
+    CHATS: dict[int, ChatConfig] = {int(k): ChatConfig(**v) for k, v in json.load(f).items()}
 
-CHAT_IDS = frozenset(SUMMARY_INTERVALS)
+CHAT_IDS = frozenset(CHATS)
 
 WIDE_LOG_DIR = "logs"
 
