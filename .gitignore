@@ -1,9 +1,9 @@
-.venv
 .vscode
 data
 logs
 test
 .env
-src/chats.json
+chats.json
 .DS_Store
 __pycache__
+node_modules

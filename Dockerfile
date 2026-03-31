@@ -1,13 +1,12 @@
-FROM ghcr.io/astral-sh/uv:python3.14-bookworm-slim
+FROM oven/bun:1-alpine
 
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache ffmpeg
 
 WORKDIR /app
 
-COPY pyproject.toml uv.lock ./
+COPY package.json bun.lock* ./
+RUN bun install --frozen-lockfile
 
-RUN uv sync --frozen --no-dev
+COPY src-ts ./src-ts
 
-COPY src ./src
-
-CMD ["uv", "run", "--no-sync", "python", "-m", "src"]
+CMD ["bun", "run", "src-ts/index.ts"]

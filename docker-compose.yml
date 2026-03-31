@@ -1,25 +1,14 @@
 services:
-  surrealdb:
-    image: surrealdb/surrealdb:v2
-    container_name: concisely-surrealdb
-    command: start rocksdb:///data -u root -p root
-    volumes:
-      - ./data:/data
-    ports:
-      - "8000:8000"
-    restart: unless-stopped
-
   bot:
     build: .
     container_name: concisely-bot
     env_file:
       - .env
     environment:
-      - SURREALDB_URL=ws://surrealdb:8000/rpc
       - WIDE_LOG_DIR=/app/logs
+      - DB_PATH=/data
     volumes:
-      - ./src:/app/src
+      - ./src-ts:/app/src-ts
       - ./logs:/app/logs
-    depends_on:
-      - surrealdb
+      - ./data:/data
     restart: unless-stopped
