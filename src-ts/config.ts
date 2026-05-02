@@ -16,13 +16,21 @@ export const CHATS: Map<number, ChatConfig> = new Map(
 export const CHAT_IDS = new Set(CHATS.keys());
 
 export const MODELS = [
-  'anthropic/claude-opus-4.6',
+  'anthropic/claude-opus-4.8',
+  'anthropic/claude-opus-4.7',
   'anthropic/claude-opus-4.6',
   'anthropic/claude-sonnet-4.6',
 
   'google/gemini-3.1-pro-preview',
-  'google/gemini-2.5-pro',
-  'google/gemini-3-flash-preview',
+  'google/gemini-3.1-pro-preview',
+  'google/gemini-3.5-flash',
+  'google/gemini-3.5-flash',
+
+  'deepseek/deepseek-v4-flash',
+  'tencent/hy3-preview',
+  'qwen/qwen3.7-max',
+  'openai/gpt-5.5',
+  'x-ai/grok-4.3',
 ];
 
 export const IMAGE_MODEL = 'google/gemini-3-flash-preview';
