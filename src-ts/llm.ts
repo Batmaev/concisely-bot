@@ -1,6 +1,9 @@
 import OpenAI from 'openai';
 import { OPENROUTER_API_KEY, MODELS, IMAGE_MODEL, VIDEO_MODEL, VOICE_MODEL } from './config.ts';
-import { timed } from './utils.ts';
+import { logWarning, timed } from './utils.ts';
+
+const CONTENT_FILTER_MESSAGE = '[тема слишком опасна]';
+
 const SUMMARIZATION_PROMPT = `Ты — бот-саммаризатор сообщений в Telegram.
 
 Сообщения поступают в формате:
@@ -104,6 +107,10 @@ export async function generateSummary(messages: MessageData[]): Promise<SummaryR
 
   const response = await openai.responses.create({ model, input: prompt });
 
+  if (response.incomplete_details?.reason === 'content_filter') {
+    throw new Error(`content_filter: ${model}`);
+  }
+
   return {
     text: response.output_text,
     model,
@@ -129,6 +136,10 @@ async function callMultimodal(model: string, prompt: string, mediaContent: unkno
       ],
     }] as Parameters<typeof openai.responses.create>[0]['input'],
   });
+  if (response.incomplete_details?.reason === 'content_filter') {
+    logWarning(`content_filter: ${model}`);
+    return { text: CONTENT_FILTER_MESSAGE, cost: extractCost(response) };
+  }
   return { text: response.output_text, cost: extractCost(response) };
 }
 
