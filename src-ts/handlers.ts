@@ -3,8 +3,8 @@ import { bot } from './bot.ts';
 import { CHATS, CHAT_IDS, BOT_TOKEN, WIDE_LOG_DIR } from './config.ts';
 import {
   getLastSummaryId, setLastSummaryId, saveMessage, getMessages,
-  getSticker, saveSticker, saveSummary,
-  type SummaryData,
+  getSticker, saveSticker, saveSummary, cleanupOldMessages,
+  type SummaryData, type CleanupResult,
 } from './db.ts';
 import {
   generateSummary, describeImage, describeSticker, describeVoice, describeVideoNote,
@@ -82,6 +82,7 @@ interface SummaryInfo {
   interval?: number;
   data?: SummaryData;
   timing_ms?: number;
+  cleanup?: CleanupResult;
 }
 
 const maybeGenerateSummary = logged('summary', async (currentMessageId: number, chatId: number): Promise<SummaryInfo> => {
@@ -134,6 +135,7 @@ const maybeGenerateSummary = logged('summary', async (currentMessageId: number, 
     if (data) {
       info.sent = true;
       info.data = data;
+      info.cleanup = await cleanupOldMessages(chatId, data.to_message_id, chatConfig.interval);
     } else {
       info.reason = 'no_messages';
     }

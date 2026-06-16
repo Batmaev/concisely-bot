@@ -130,3 +130,32 @@ export const saveSummary = timed('save_summary', async (data: SummaryData): Prom
     new Date().toISOString(),
   );
 });
+
+
+export interface CleanupResult {
+  rows: number;
+  /** freelist_count × page_size — всего свободных байт в файле БД */
+  bytes_freelist: number;
+}
+
+function getFreelistBytes(): number {
+  const { page_size } = db.query<{ page_size: number }, []>('PRAGMA page_size').get()!;
+  const { freelist_count } = db.query<{ freelist_count: number }, []>('PRAGMA freelist_count').get()!;
+  return page_size * freelist_count;
+}
+
+export const cleanupOldMessages = timed('cleanup_old_messages', async (
+  chatId: number,
+  lastSummaryId: number,
+  interval: number,
+): Promise<CleanupResult> => {
+  const empty: CleanupResult = { rows: 0, bytes_freelist: 0 };
+  const cutoff = lastSummaryId - 3 * interval;
+  if (cutoff <= 0) return empty;
+
+  const result = db.query(
+    'DELETE FROM message WHERE chat_id = ? AND message_id < ? AND attachment IS NULL',
+  ).run(chatId, cutoff);
+
+  return { rows: result.changes, bytes_freelist: getFreelistBytes() };
+});
