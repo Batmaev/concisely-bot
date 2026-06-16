@@ -1,0 +1,10 @@
+FROM alpine:3.21
+
+RUN apk add --no-cache zstd bash coreutils
+
+COPY scripts/archive-logs.sh /archive-logs.sh
+
+ENV WIDE_LOG_DIR=/logs \
+    KEEP_DAYS=3
+
+CMD ["sh", "-c", "/archive-logs.sh && printf '5 0 * * * /archive-logs.sh >> /var/log/archive.log 2>&1\\n' | crontab - && crond -f -l 2"]

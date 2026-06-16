@@ -30,7 +30,6 @@ export const MODELS = [
   'tencent/hy3-preview',
   'qwen/qwen3.7-max',
   'openai/gpt-5.5',
-  'x-ai/grok-4.3',
 ];
 
 export const IMAGE_MODEL = 'google/gemini-3-flash-preview';

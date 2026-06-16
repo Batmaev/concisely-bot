@@ -12,3 +12,15 @@ services:
       - ./logs:/app/logs
       - ./data:/data
     restart: unless-stopped
+
+  log-archiver:
+    build:
+      context: .
+      dockerfile: Dockerfile.archiver
+    container_name: concisely-log-archiver
+    environment:
+      - WIDE_LOG_DIR=/logs
+      - KEEP_DAYS=3
+    volumes:
+      - ./logs:/logs
+    restart: unless-stopped
