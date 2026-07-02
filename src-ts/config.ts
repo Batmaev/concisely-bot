@@ -8,6 +8,8 @@ export const DB_PATH = process.env.DB_PATH ?? 'data';
 export interface ChatConfig {
   interval: number;
   transcribe: boolean;
+  /** Топик для саммари в форум-чатах. Не указывать для General (1 передавать нельзя — Bot API вернёт ошибку) */
+  summary_topic_id?: number;
 }
 
 export const CHATS: Map<number, ChatConfig> = new Map(

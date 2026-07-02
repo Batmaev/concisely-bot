@@ -1,4 +1,4 @@
-import type { Message } from 'grammy/types';
+import type { Chat, Message } from 'grammy/types';
 import { bot } from './bot.ts';
 import { CHATS, CHAT_IDS, BOT_TOKEN, WIDE_LOG_DIR } from './config.ts';
 import {
@@ -19,22 +19,22 @@ import {
 const summaryLocks = new Map<number, Promise<void>>();
 const generatingChats = new Set<number>();
 
-async function sendSummary(chatId: number, summary: string, model: string): Promise<void> {
+async function sendSummary(chatId: number, summary: string, model: string, threadId?: number): Promise<void> {
   const text = fixHtml(summary.slice(0, 3000));
   const modelShort = getModelShortName(model);
   const fullMessage = `#concisely\n${text}\n\n${modelShort}`;
 
   try {
-    await bot.api.sendMessage(chatId, fullMessage, { parse_mode: 'HTML' });
+    await bot.api.sendMessage(chatId, fullMessage, { parse_mode: 'HTML', message_thread_id: threadId });
   } catch (e) {
     logWarning(`html_fallback: ${e}`);
-    await bot.api.sendMessage(chatId, fullMessage);
+    await bot.api.sendMessage(chatId, fullMessage, { message_thread_id: threadId });
   }
 }
 
-async function keepTyping(chatId: number, signal: AbortSignal): Promise<void> {
+async function keepTyping(chatId: number, signal: AbortSignal, threadId?: number): Promise<void> {
   while (!signal.aborted) {
-    await bot.api.sendChatAction(chatId, 'typing');
+    await bot.api.sendChatAction(chatId, 'typing', { message_thread_id: threadId });
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(resolve, 4000);
       signal.addEventListener('abort', () => { clearTimeout(t); reject(new Error('aborted')); }, { once: true });
@@ -43,12 +43,12 @@ async function keepTyping(chatId: number, signal: AbortSignal): Promise<void> {
   }
 }
 
-const generateAndSendSummary = timed('summary', async (chatId: number, fromId: number, toId: number): Promise<SummaryData | null> => {
+const generateAndSendSummary = timed('summary', async (chatId: number, fromId: number, toId: number, threadId?: number): Promise<SummaryData | null> => {
   const messages = await getMessages(chatId, fromId, toId) as MessageData[];
   if (!messages.length) return null;
 
   const ac = new AbortController();
-  const typingLoop = keepTyping(chatId, ac.signal);
+  const typingLoop = keepTyping(chatId, ac.signal, threadId);
   let result: Awaited<ReturnType<typeof generateSummary>>;
   try {
     result = await generateSummary(messages);
@@ -57,7 +57,7 @@ const generateAndSendSummary = timed('summary', async (chatId: number, fromId: n
     await typingLoop;
   }
 
-  await sendSummary(chatId, result.text, result.model);
+  await sendSummary(chatId, result.text, result.model, threadId);
   await setLastSummaryId(chatId, toId);
 
   return {
@@ -85,7 +85,7 @@ interface SummaryInfo {
   cleanup?: CleanupResult;
 }
 
-const maybeGenerateSummary = logged('summary', async (currentMessageId: number, chatId: number): Promise<SummaryInfo> => {
+const maybeGenerateSummary = logged('summary', async (currentMessageId: number, chatId: number, threadId?: number): Promise<SummaryInfo> => {
   const info: SummaryInfo = { attempted: false, sent: false };
 
   if (generatingChats.has(chatId)) {
@@ -131,7 +131,7 @@ const maybeGenerateSummary = logged('summary', async (currentMessageId: number, 
 
   try {
     info.attempted = true;
-    const data = await generateAndSendSummary(chatId, lastSummaryId, currentMessageId);
+    const data = await generateAndSendSummary(chatId, lastSummaryId, currentMessageId, threadId);
     if (data) {
       info.sent = true;
       info.data = data;
@@ -215,11 +215,17 @@ function chatShiftId(chatId: number): string {
   return String(chatId).replace('-100', '');
 }
 
-async function sendTranscription(chatId: number, messageId: number, text: string): Promise<void> {
-  const link = `https://t.me/c/${chatShiftId(chatId)}/${messageId}`;
+function messageLink(chat: Chat, messageId: number, threadId?: number): string {
+  const username = chat.type !== 'group' ? chat.username : undefined;
+  const base = username ? `https://t.me/${username}` : `https://t.me/c/${chatShiftId(chat.id)}`;
+  return threadId ? `${base}/${threadId}/${messageId}` : `${base}/${messageId}`;
+}
+
+async function sendTranscription(chat: Chat, messageId: number, text: string, threadId?: number): Promise<void> {
+  const link = messageLink(chat, messageId, threadId);
   const html = `<blockquote expandable><a href="${link}">↑</a> ${fixHtml(text)}</blockquote>`;
   try {
-    await bot.api.sendMessage(chatId, html, { parse_mode: 'HTML' });
+    await bot.api.sendMessage(chat.id, html, { parse_mode: 'HTML', message_thread_id: threadId });
   } catch (e) {
     logWarning(`send_transcription: ${e}`);
   }
@@ -238,13 +244,14 @@ export function registerHandlers(): void {
         context.request_id = `${message.chat.id}:${message.message_id}`;
         context.message = message;
 
+        const chatConfig = CHATS.get(message.chat.id)!;
+
         if (attachment) {
           const describe = await describeAttachment(message, attachment);
           if (describe) {
             Object.assign(attachment, describe);
-            const chatConfig = CHATS.get(message.chat.id)!;
             if ((attachment.type === 'voice' || attachment.type === 'video_note') && chatConfig.transcribe) {
-              await sendTranscription(message.chat.id, message.message_id, describe.description);
+              await sendTranscription(message.chat, message.message_id, describe.description, message.message_thread_id);
             }
           }
         }
@@ -261,7 +268,7 @@ export function registerHandlers(): void {
         };
         await saveMessage(messageData);
 
-        const summaryInfo = await maybeGenerateSummary(message.message_id, message.chat.id);
+        const summaryInfo = await maybeGenerateSummary(message.message_id, message.chat.id, chatConfig.summary_topic_id);
         if (summaryInfo.sent && summaryInfo.data) {
           await saveSummary(summaryInfo.data);
         }
