@@ -11,6 +11,9 @@ services:
       - ./src-ts:/app/src-ts
       - ./logs:/app/logs
       - ./data:/data
+    networks:
+      - default
+      - caddy_net
     restart: unless-stopped
 
   log-archiver:
@@ -24,3 +27,7 @@ services:
     volumes:
       - ./logs:/logs
     restart: unless-stopped
+
+networks:
+  caddy_net:
+    external: true

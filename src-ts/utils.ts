@@ -3,6 +3,7 @@ import { appendFileSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import sanitizeHtml from 'sanitize-html';
 import type { Message } from 'grammy/types';
+import { ADMIN_USERNAME, BOT_USERNAME } from './config.ts';
 
 export interface LogContext {
   timings: Record<string, number>;
@@ -62,6 +63,37 @@ export function timedAndLogged<Args extends unknown[], R>(
   return logged(key, timed(key, fn));
 }
 
+export function chatShiftId(chatId: number): string {
+  return String(chatId).replace('-100', '');
+}
+
+export function usd(amount: number, digits = 2): string {
+  return (amount < 0 ? '-$' : '$') + Math.abs(amount).toFixed(digits);
+}
+
+export function payUrl(chatId: number): string {
+  const text = `Привет, хочу оплатить ${BOT_USERNAME} для чата \`${chatShiftId(chatId)}\``;
+  return `https://t.me/${ADMIN_USERNAME}?text=${encodeURIComponent(text)}`;
+}
+
+/**
+ * Кандидаты реального chat_id по строке, которую прислал/ввёл пользователь.
+ * Однозначно восстановить id нельзя: положительное число может быть как
+ * shift-id супергруппы (-100…), так и полным id легаси-чата. Поэтому вернём
+ * все варианты — а вызывающий код выберет тот, что реально есть в БД.
+ *   "1234567890"     → [-1001234567890, 1234567890]
+ *   "-1001234567890" → [-1001234567890]
+ *   "-123456789"     → [-123456789]
+ * Пустой массив — если строку не удалось распознать как число.
+ */
+export function chatIdCandidates(raw: string): number[] {
+  const s = raw.trim();
+  if (!/^-?\d+$/.test(s)) return [];
+  const n = parseInt(s);
+  if (s.startsWith('-')) return [n];
+  return [parseInt(`-100${s}`), n];
+}
+
 export function fixHtml(text: string): string {
   return sanitizeHtml(text, {
     allowedTags: ['b', 'i', 'a', 'code', 'pre', 's', 'u'],
@@ -74,7 +106,6 @@ export function getMessageText(message: Message): string {
 }
 
 export function getAttachmentInfo(message: Message): Record<string, unknown> | null {
-  // Determine content type from which field is set
   let ct: string | null = null;
   if (message.photo) ct = 'photo';
   else if (message.voice) ct = 'voice';

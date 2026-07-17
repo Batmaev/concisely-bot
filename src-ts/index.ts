@@ -1,11 +1,13 @@
 import { bot } from './bot.ts';
 import { initDb, closeDb } from './db.ts';
 import { registerHandlers } from './handlers.ts';
+import { startWebApp } from './webapp.ts';
 
 async function main() {
   console.log('Запуск бота...');
   await initDb();
   registerHandlers();
+  startWebApp();
 
   const stop = async () => {
     await bot.stop();

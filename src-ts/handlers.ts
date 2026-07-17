@@ -1,10 +1,12 @@
 import type { Chat, Message } from 'grammy/types';
 import { bot } from './bot.ts';
-import { CHATS, CHAT_IDS, BOT_TOKEN, WIDE_LOG_DIR } from './config.ts';
+import { BOT_TOKEN, WIDE_LOG_DIR, OWNER_ID, APP_SHORT_NAME, BOT_USERNAME } from './config.ts';
 import {
-  getLastSummaryId, setLastSummaryId, saveMessage, getMessages,
+  getLastSummaryId, getLastSummary, setLastSummaryId, getInitialSummaryAnchor, getMaxMessageId, saveMessage, getMessages,
   getSticker, saveSticker, saveSummary, cleanupOldMessages,
-  type SummaryData, type CleanupResult,
+  getChatOrCreate, addCost, addBalance,
+  incMessageCount, incSummaryCount, findChatByCandidates, getAllChats, isPaused, messagesSinceSummary, chargeableCost,
+  type SummaryData, type CleanupResult, type ChatRow,
 } from './db.ts';
 import {
   generateSummary, describeImage, describeSticker, describeVoice, describeVideoNote,
@@ -13,11 +15,14 @@ import {
 import {
   logStorage, logWarning, timed, logged, timedAndLogged,
   fixHtml, getMessageText, getAttachmentInfo, getSenderName, getForwardSenderName,
-  appendWideLog, type LogContext,
+  appendWideLog, chatShiftId, chatIdCandidates, usd, payUrl, type LogContext,
 } from './utils.ts';
+import { parseAmount, convertToUsd, getUsdRubRate } from './currency.ts';
 
 const summaryLocks = new Map<number, Promise<void>>();
 const generatingChats = new Set<number>();
+// message_id последней чистки для чатов на паузе (троттлинг ~раз в interval).
+const pausedCleanupAt = new Map<number, number>();
 
 async function sendSummary(chatId: number, summary: string, model: string, threadId?: number): Promise<void> {
   const text = fixHtml(summary.slice(0, 3000));
@@ -75,6 +80,7 @@ const generateAndSendSummary = timed('summary', async (chatId: number, fromId: n
 interface SummaryInfo {
   attempted: boolean;
   sent: boolean;
+  retry?: boolean;
   reason?: string;
   error?: string;
   last_summary_id?: number | null;
@@ -85,15 +91,19 @@ interface SummaryInfo {
   cleanup?: CleanupResult;
 }
 
-const maybeGenerateSummary = logged('summary', async (currentMessageId: number, chatId: number, threadId?: number): Promise<SummaryInfo> => {
-  const info: SummaryInfo = { attempted: false, sent: false };
+const maybeGenerateSummary = logged('summary', async (
+  currentMessageId: number,
+  chat: ChatRow,
+  opts?: { retry?: boolean },
+): Promise<SummaryInfo> => {
+  const info: SummaryInfo = { attempted: false, sent: false, retry: opts?.retry };
+  const chatId = chat.chat_id;
 
   if (generatingChats.has(chatId)) {
     info.reason = 'already_generating';
     return info;
   }
 
-  // Serialize per-chat
   const prevLock = summaryLocks.get(chatId) ?? Promise.resolve();
   let resolveLock!: () => void;
   const lock = new Promise<void>(r => { resolveLock = r; });
@@ -107,35 +117,56 @@ const maybeGenerateSummary = logged('summary', async (currentMessageId: number, 
     return info;
   }
 
-  const lastSummaryId = await getLastSummaryId(chatId);
+  let lastSummaryId: number | null;
+
+  if (opts?.retry) {
+    // Как если бы last_summary_id на мгновение откатился к началу прошлого саммари.
+    const prev = await getLastSummary(chatId);
+    if (!prev) {
+      resolveLock();
+      info.reason = 'no_previous_summary';
+      return info;
+    }
+    lastSummaryId = prev.from_message_id;
+  } else {
+    lastSummaryId = await getLastSummaryId(chatId);
+
+    if (lastSummaryId === null) {
+      // Первое саммари (обычно сразу после активации): охватываем последние
+      // `interval` накопленных сообщений, в т.ч. пришедшие, пока чат был на паузе.
+      const anchor = await getInitialSummaryAnchor(chatId, chat.interval);
+      if (anchor === null) {
+        resolveLock();
+        info.reason = 'no_messages';
+        return info;
+      }
+      lastSummaryId = anchor;
+      await setLastSummaryId(chatId, anchor);
+    }
+
+    if (currentMessageId - lastSummaryId < chat.interval) {
+      resolveLock();
+      info.reason = 'interval_not_reached';
+      info.messages_since_last = currentMessageId - lastSummaryId;
+      info.interval = chat.interval;
+      info.last_summary_id = lastSummaryId;
+      return info;
+    }
+  }
   info.last_summary_id = lastSummaryId;
-
-  if (lastSummaryId === null) {
-    await setLastSummaryId(chatId, currentMessageId);
-    resolveLock();
-    info.reason = 'first_run';
-    return info;
-  }
-
-  const chatConfig = CHATS.get(chatId)!;
-  if (currentMessageId - lastSummaryId < chatConfig.interval) {
-    resolveLock();
-    info.reason = 'interval_not_reached';
-    info.messages_since_last = currentMessageId - lastSummaryId;
-    info.interval = chatConfig.interval;
-    return info;
-  }
 
   generatingChats.add(chatId);
   resolveLock();
 
   try {
     info.attempted = true;
-    const data = await generateAndSendSummary(chatId, lastSummaryId, currentMessageId, threadId);
+    const data = await generateAndSendSummary(chatId, lastSummaryId, currentMessageId, chat.summary_topic_id ?? undefined);
     if (data) {
       info.sent = true;
       info.data = data;
-      info.cleanup = await cleanupOldMessages(chatId, data.to_message_id, chatConfig.interval);
+      await addCost(chatId, data.cost);
+      await incSummaryCount(chatId);
+      info.cleanup = await cleanupOldMessages(chatId, data.to_message_id, chat.interval);
     } else {
       info.reason = 'no_messages';
     }
@@ -211,10 +242,6 @@ const describeAttachment = timedAndLogged('describe_attachment', async (message:
   return null;
 });
 
-function chatShiftId(chatId: number): string {
-  return String(chatId).replace('-100', '');
-}
-
 function messageLink(chat: Chat, messageId: number, threadId?: number): string {
   const username = chat.type !== 'group' ? chat.username : undefined;
   const base = username ? `https://t.me/${username}` : `https://t.me/c/${chatShiftId(chat.id)}`;
@@ -231,10 +258,210 @@ async function sendTranscription(chat: Chat, messageId: number, text: string, th
   }
 }
 
+function settingsKeyboard(chatId: number) {
+  const url = `https://t.me/${BOT_USERNAME}/${APP_SHORT_NAME}?startapp=${chatId}`;
+  return {
+    link_preview_options: { is_disabled: true },
+    reply_markup: {
+      inline_keyboard: [[
+        { text: 'Настройки и статистика', url },
+      ]],
+    },
+  };
+}
+
+async function sendOnboarding(chatId: number): Promise<void> {
+  try {
+    await bot.api.sendMessage(
+      chatId,
+      'Этот бот умеет писать саммари, а также расшифровывать кружочки и голосовые сообщения. \n\n' +
+      `Чтобы начать, <a href="${payUrl(chatId)}">пополните баланс у админа</a>. Типичная стоимость — $0.25 за тысячу сообщений. \n\n` +
+      'Настройки и статистика — /settings',
+      { parse_mode: 'HTML', ...settingsKeyboard(chatId) },
+    );
+  } catch (e) {
+    console.error(`onboarding_button: ${e}`);
+  }
+}
+
 export function registerHandlers(): void {
+  bot.on('my_chat_member', async (ctx) => {
+    const update = ctx.myChatMember;
+    const oldStatus = update.old_chat_member.status;
+    const newStatus = update.new_chat_member.status;
+    const chat = update.chat;
+
+    // Онбординг только при добавлении в чат: был вне чата → стал участником.
+    // Иначе (повышение до админа, смена прав и т.п.) приветствие не шлём.
+    const wasOut = oldStatus === 'left' || oldStatus === 'kicked';
+    const isIn = newStatus === 'member' || newStatus === 'administrator' || newStatus === 'restricted';
+    if (!wasOut || !isIn) return;
+
+    if (chat.type === 'private') return;
+
+    await getChatOrCreate(chat.id, chat.title ?? '');
+    await sendOnboarding(chat.id);
+  });
+
+  bot.command('settings', async (ctx) => {
+    if (ctx.chat.type === 'private') {
+      await ctx.reply('Добавьте бота в групповой чат — настройки доступны там.').catch(() => {});
+      return;
+    }
+
+    const chatId = ctx.chat.id;
+    await getChatOrCreate(chatId, ctx.chat.title ?? '');
+    try {
+      await ctx.reply('Настройки и статистика:', settingsKeyboard(chatId));
+    } catch (e) {
+      console.error(`settings: ${e}`);
+    }
+  });
+
+  bot.command('retry', async (ctx) => {
+    if (ctx.chat.type === 'private') {
+      await ctx.reply('Добавьте бота в групповой чат — команда доступна там.').catch(() => {});
+      return;
+    }
+
+    const context: LogContext = { timings: {} };
+    await logStorage.run(context, async () => {
+      const start = performance.now();
+      try {
+        context.request_id = `${ctx.chat.id}:${ctx.msg.message_id}`;
+        context.message = ctx.msg;
+
+        const chat = await getChatOrCreate(ctx.chat.id, ctx.chat.title ?? '');
+        if (isPaused(chat)) {
+          context.paused = true;
+          await ctx.reply('Бот на паузе до оплаты.').catch(() => {});
+          return;
+        }
+
+        const lastMessageId = await getMaxMessageId(chat.chat_id);
+        if (lastMessageId === null) {
+          await ctx.reply('Ещё не было саммари — нечего перегенерировать.').catch(() => {});
+          return;
+        }
+
+        const summaryInfo = await maybeGenerateSummary(lastMessageId, chat, { retry: true });
+        if (summaryInfo.sent && summaryInfo.data) {
+          await saveSummary(summaryInfo.data);
+        } else if (summaryInfo.reason === 'no_previous_summary') {
+          await ctx.reply('Ещё не было саммари — нечего перегенерировать.').catch(() => {});
+        }
+      } catch (e) {
+        context.error = String(e);
+        context.error_stack = e instanceof Error ? e.stack : undefined;
+      } finally {
+        context.timings.total = Math.round((performance.now() - start) * 10) / 10;
+      }
+    });
+
+    appendWideLog(context, WIDE_LOG_DIR);
+  });
+
+  bot.command('add', async (ctx) => {
+    if (ctx.from?.id !== OWNER_ID) return;
+    if (ctx.chat.type !== 'private') return;
+
+    const args = ctx.msg.text?.split(/\s+/).slice(1) ?? [];
+    const chatIdStr = args[0];
+    const sumStr = args.slice(1).join(' ').trim();
+    if (!chatIdStr || !sumStr) {
+      await ctx.reply('Использование: /add {chat_id} {сумма} (напр. /add 1234567890 1000₽)');
+      return;
+    }
+
+    const candidates = chatIdCandidates(chatIdStr);
+    if (!candidates.length) {
+      await ctx.reply('Неверный chat_id');
+      return;
+    }
+    // shift-id неоднозначен: берём тот вариант, что уже есть в БД, иначе — наиболее вероятный.
+    const existing = await findChatByCandidates(candidates);
+    const chatId = existing?.chat_id ?? candidates[0];
+
+    const parsed = parseAmount(sumStr);
+    if (!parsed) {
+      await ctx.reply('Не удалось распознать сумму. Примеры: 1000₽, 1000, $10, 10 USD');
+      return;
+    }
+
+    let usdAmount: number;
+    try {
+      usdAmount = await convertToUsd(parsed.amount, parsed.currency);
+    } catch (e) {
+      await ctx.reply(`Ошибка получения курса: ${e}`);
+      return;
+    }
+    usdAmount = Math.round(usdAmount * 1e6) / 1e6;
+
+    const before = await getChatOrCreate(chatId);
+    const updated = await addBalance(chatId, usdAmount);
+    if (!updated) {
+      await ctx.reply(`Чат ${chatShiftId(chatId)} не найден и не создан`);
+      return;
+    }
+
+    const paused = isPaused(updated);
+    const rate = parsed.currency === 'RUB' ? await getUsdRubRate().catch(() => null) : null;
+    const rateInfo = rate ? ` (курс ${rate.toFixed(2)} ₽/$)` : '';
+    await ctx.reply(
+      `Чат ${chatShiftId(chatId)} — ${updated.title || 'без названия'}\n` +
+      `Сообщений: ${updated.n_messages}\n` +
+      `Саммари: ${updated.n_summaries}\n` +
+      `Траты за всё время: ${usd(chargeableCost(updated))}\n` +
+      `Пополнение: ${parsed.amount} ${parsed.currency} = ${usd(usdAmount)}${rateInfo}\n` +
+      `Баланс: ${usd(before.balance)} → ${usd(updated.balance)}\n` +
+      `Статус: ${paused ? 'на паузе до оплаты' : 'подключён'}`
+    );
+  });
+
+  bot.command('stats', async (ctx) => {
+    if (ctx.from?.id !== OWNER_ID) return;
+    if (ctx.chat.type !== 'private') return;
+
+    const chats = await getAllChats();
+    if (!chats.length) {
+      await ctx.reply('Чатов нет');
+      return;
+    }
+
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+    const blocks = chats.map((c) => {
+      const cost = chargeableCost(c);
+      const left = c.balance - cost;
+      const accumulated = messagesSinceSummary(c, c.max_message_id);
+      const status = !c.activated ? 'не активирован'
+        : isPaused(c) ? 'на паузе'
+        : 'работает';
+      return (
+        `${esc(c.title || 'без названия')} | <code>${chatShiftId(c.chat_id)}</code>\n` +
+        `Статус: ${status}\n` +
+        `Баланс: ${usd(c.balance)} - ${usd(cost)} = ${usd(left)}\n` +
+        `Осталось: ${accumulated} / ${c.interval}\n` +
+        `Сообщений: ${c.n_messages}\n` +
+        `Саммари: ${c.n_summaries}`
+      );
+    });
+
+    // Группами по 10, чтобы не упереться в лимит длины сообщения.
+    for (let i = 0; i < blocks.length; i += 10) {
+      const text = blocks.slice(i, i + 10).join('\n\n');
+      try {
+        await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } });
+      } catch (e) {
+        console.error(`stats: ${e}`);
+      }
+    }
+  });
+
   bot.on('message', async (ctx) => {
     const message = ctx.message;
-    if (!CHAT_IDS.has(message.chat.id)) return;
+
+    if (message.chat.type === 'private') return;
 
     const context: LogContext = { timings: {} };
     await logStorage.run(context, async () => {
@@ -244,13 +471,15 @@ export function registerHandlers(): void {
         context.request_id = `${message.chat.id}:${message.message_id}`;
         context.message = message;
 
-        const chatConfig = CHATS.get(message.chat.id)!;
+        const chat = await getChatOrCreate(message.chat.id, message.chat.title ?? '');
+        const paused = isPaused(chat);
 
-        if (attachment) {
+        if (attachment && !paused) {
           const describe = await describeAttachment(message, attachment);
           if (describe) {
             Object.assign(attachment, describe);
-            if ((attachment.type === 'voice' || attachment.type === 'video_note') && chatConfig.transcribe) {
+            await addCost(message.chat.id, describe.cost);
+            if ((attachment.type === 'voice' || attachment.type === 'video_note') && chat.transcribe) {
               await sendTranscription(message.chat, message.message_id, describe.description, message.message_thread_id);
             }
           }
@@ -267,8 +496,21 @@ export function registerHandlers(): void {
           attachment: attachment ?? null,
         };
         await saveMessage(messageData);
+        await incMessageCount(message.chat.id);
 
-        const summaryInfo = await maybeGenerateSummary(message.message_id, message.chat.id, chatConfig.summary_topic_id);
+        if (paused) {
+          context.paused = true;
+          // Даже на паузе чистим очень старые сообщения (то же правило 3×interval),
+          // чтобы БД не разрасталась у неоплаченных чатов. Троттлим ~раз в interval.
+          const lastCleanup = pausedCleanupAt.get(message.chat.id) ?? 0;
+          if (message.message_id - lastCleanup >= chat.interval) {
+            pausedCleanupAt.set(message.chat.id, message.message_id);
+            context.cleanup = await cleanupOldMessages(message.chat.id, message.message_id, chat.interval);
+          }
+          return;
+        }
+
+        const summaryInfo = await maybeGenerateSummary(message.message_id, chat);
         if (summaryInfo.sent && summaryInfo.data) {
           await saveSummary(summaryInfo.data);
         }
