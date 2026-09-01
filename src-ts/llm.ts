@@ -101,23 +101,49 @@ function extractCost(response: { usage?: unknown }): number | null {
   return (response.usage as Record<string, unknown> | null | undefined)?.cost as number ?? null;
 }
 
+const SUMMARY_ATTEMPTS = 3;
+
+function pickModel(exclude: Set<string>): string | null {
+  const pool = MODELS.filter(m => !exclude.has(m));
+  if (!pool.length) return null;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 export async function generateSummary(messages: MessageData[]): Promise<SummaryResult> {
-  const model = MODELS[Math.floor(Math.random() * MODELS.length)];
   const prompt = generateFullPrompt(messages);
+  const failed = new Set<string>();
+  let lastError: Error | undefined;
 
-  const response = await openai.responses.create({ model, input: prompt });
+  for (let attempt = 0; attempt < SUMMARY_ATTEMPTS; attempt++) {
+    const model = pickModel(failed);
+    if (!model) break;
+    failed.add(model);
 
-  if (response.incomplete_details?.reason === 'content_filter') {
-    throw new Error(`content_filter: ${model}`);
+    const response = await openai.responses.create({ model, input: prompt });
+    const text = (response.output_text ?? '').trim();
+    const filter = response.incomplete_details?.reason === 'content_filter';
+
+    if (filter || !text) {
+      const reason = filter ? 'content_filter' : 'empty_summary';
+      lastError = new Error(`${reason}: ${model}`);
+      logWarning(
+        `${reason}: ${model}`
+        + (response.status ? ` status=${response.status}` : '')
+        + (response.incomplete_details ? ` incomplete=${JSON.stringify(response.incomplete_details)}` : ''),
+      );
+      continue;
+    }
+
+    return {
+      text: response.output_text,
+      model,
+      input_tokens: response.usage?.input_tokens ?? null,
+      output_tokens: response.usage?.output_tokens ?? null,
+      cost: extractCost(response),
+    };
   }
 
-  return {
-    text: response.output_text,
-    model,
-    input_tokens: response.usage?.input_tokens ?? null,
-    output_tokens: response.usage?.output_tokens ?? null,
-    cost: extractCost(response),
-  };
+  throw lastError ?? new Error('summary_failed');
 }
 
 export interface DescribeResult {

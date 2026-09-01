@@ -62,6 +62,10 @@ const generateAndSendSummary = timed('summary', async (chatId: number, fromId: n
     await typingLoop;
   }
 
+  if (!result.text.trim()) {
+    throw new Error(`empty_summary: ${result.model}`);
+  }
+
   await sendSummary(chatId, result.text, result.model, threadId);
   await setLastSummaryId(chatId, toId);
 
